@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Parking Management System - Admin</title>
+</head>
+<body>
+<h1>Parking Management System</h1>
+
+<h2>Admin Dashboard</h2>
+
+<p>Welcome, Admin.</p>
+
+<h3>Parking Management</h3>
+
+<p>
+    <a href="{{BASE_URL}}/api/admin">Open Admin Module</a>
+</p>
+
+<p>
+    <a href="{{BASE_URL}}/api/booking">Bookings</a>
+</p>
+
+<p>
+    <a href="{{BASE_URL}}/api/auth/totp">Security / Two-factor authentication</a>
+</p>
+
+<form method="post" action="{{BASE_URL}}/api/auth/logout">
+    <button type="submit">Logout</button>
+</form>
+</body>
+</html>

@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>User</title>
+</head>
+<body>
+    <h1>Welcome User</h1>
+    <p><a href="{{BASE_URL}}/api/auth/totp">Security / Two-factor authentication</a></p>
+    <form method="post" action="{{BASE_URL}}/api/auth/logout">
+        <button type="submit">Logout</button>
+    </form>
+</body>
+</html>

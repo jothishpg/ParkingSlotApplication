@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Parking Management System - Sign Up</title>
+</head>
+<body>
+<h1>Parking Management System</h1>
+
+<h2>SIGN UP</h2>
+
+<form method="post" action="api/auth/signup">
+    <label for="name">Name</label><br>
+    <input type="text" id="name" name="name" required><br><br>
+
+    <label for="email">Email</label><br>
+    <input type="email" id="email" name="email" required><br><br>
+
+    <label for="phoneNumber">Phone Number</label><br>
+    <input type="tel" id="phoneNumber" name="phoneNumber"
+           inputmode="numeric" pattern="[0-9]{10}" maxlength="10"
+           title="Enter exactly 10 digits" required><br><br>
+
+    <label for="password">Password</label><br>
+    <input type="password" id="password" name="password" required><br><br>
+
+    <label for="confirmPassword">Confirm Password</label><br>
+    <input type="password" id="confirmPassword" name="confirmPassword" required><br><br>
+
+    <button type="submit">Sign Up</button>
+</form>
+
+<p>OR</p>
+
+<p>
+    <a href="api/auth/google/start?mode=signup">Sign up with Google</a>
+</p>
+
+<p>
+    Already have an account?
+    <a href="login.html">Login</a>
+</p>
+</body>
+</html>
