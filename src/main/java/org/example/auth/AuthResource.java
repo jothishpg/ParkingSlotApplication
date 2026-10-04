@@ -92,8 +92,11 @@ public class AuthResource {
             statement.setString(1, email);
 
             try (ResultSet result = statement.executeQuery()) {
-                if (!result.next()
-                        || !passwordMatches(password, result.getString("password"))) {
+                if(!result.next()){
+                    PasswordHasher.burnTime("");
+                    return htmlError(Response.Status.UNAUTHORIZED, "Invalid email or password.", request);
+                }
+                if (!passwordMatches(password, result.getString("password"))) {
                     return htmlError(Response.Status.UNAUTHORIZED, "Invalid email or password.", request);
                 }
 
@@ -1036,8 +1039,6 @@ public class AuthResource {
         try {
             return PasswordHasher.matches(plainPassword, storedHash);
         } catch (IllegalArgumentException exception) {
-            // The stored value is not a valid bcrypt hash (e.g. a row that
-            // was never migrated). Treat it as a failed login, not a 500.
             LOGGER.warning("Stored password is not a valid bcrypt hash.");
             return false;
         }

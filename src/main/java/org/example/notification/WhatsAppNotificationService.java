@@ -123,6 +123,20 @@ public final class WhatsAppNotificationService {
             LOGGER.warning("WhatsApp notification failed: recipient phone number is invalid.");
             return;
         }
+//        MetaOAuthService.MessagingCredentials credentials;
+//        try {
+//            credentials = MetaOAuthService.messagingCredentials();
+//        } catch (SQLException | IOException exception) {
+//            LOGGER.log(Level.WARNING,
+//                    "WhatsApp notification failed: no usable employee system-user token is configured.",
+//                    exception);
+//            return;
+//        } catch (RuntimeException exception) {
+//            LOGGER.log(Level.SEVERE,
+//                    "WhatsApp notification failed while decrypting or loading Meta credentials.",
+//                    exception);
+//            return;
+//        }
 
         Map<String, Object> template = new LinkedHashMap<>();
         template.put("name", templateName);
@@ -157,12 +171,20 @@ public final class WhatsAppNotificationService {
         }
         LOGGER.fine("WhatsApp payload for template " + templateName + ": " + payloadJson);
 
+//        String apiUrl = "https://graph.facebook.com/" + API_VERSION + "/"
+//                + credentials.phoneNumberId() + "/messages";
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(API_URL))
                 .header("Authorization", "Bearer " + ACCESS_TOKEN)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(payloadJson, StandardCharsets.UTF_8))
                 .build();
+//        HttpRequest request = HttpRequest.newBuilder()
+//                .uri(URI.create(apiUrl))
+//                .header("Authorization", "Bearer " + credentials.accessToken())
+//                .header("Content-Type", "application/json")
+//                .POST(HttpRequest.BodyPublishers.ofString(payloadJson, StandardCharsets.UTF_8))
+//                .build();
         try {
             HttpResponse<String> response =
                     HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());

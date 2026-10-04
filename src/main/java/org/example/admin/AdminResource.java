@@ -53,6 +53,8 @@ public class AdminResource {
                     |
                     <a href="%1$s/api/admin/email-setup">Email Setup</a>
                     |
+                    <a href="%1$s/api/admin/facebook-setup">Facebook / WhatsApp Setup</a>
+                    |
                     <a href="%1$s/api/auth/totp">Security / 2FA</a>
                 </p>
                 <p>
