@@ -123,7 +123,8 @@ public final class GmailEmailService {
         }
         sendGmailMessage(accessToken, senderEmail, senderEmail,
                 "Gmail sender setup test",
-                "This test confirms that the parking system can send forgot-password emails from this account.");
+                "This test confirms that the parking system can send forgot-password emails from this account.",
+                null);
 
         return new Authorization(senderEmail, refreshToken, accessToken,
                 Instant.now().plusSeconds(expiresIn), scopes);
@@ -162,6 +163,32 @@ public final class GmailEmailService {
         return currentAccessToken().senderEmail();
     }
 
+    public static String getReplyToEmail() throws SQLException {
+        String sql = "SELECT reply_to_email FROM email_sender_config WHERE config_id = 1";
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql);
+             ResultSet result = statement.executeQuery()) {
+            return result.next() ? result.getString("reply_to_email") : null;
+        }
+    }
+
+    public static void saveReplyToEmail(String replyToEmail) throws SQLException, EmailSetupException {
+        String sql = """
+            UPDATE email_sender_config
+            SET reply_to_email = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE config_id = 1
+            """;
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, replyToEmail == null || replyToEmail.isBlank()
+                    ? null : replyToEmail.trim());
+            if (statement.executeUpdate() == 0) {
+                throw new EmailSetupException(
+                        "Connect a Gmail sender before configuring the Reply-To address.");
+            }
+        }
+    }
+
     public static void disconnect() throws SQLException {
         try (Connection connection = DatabaseConnection.getConnection();
              PreparedStatement statement = connection.prepareStatement(
@@ -175,7 +202,7 @@ public final class GmailEmailService {
         try {
             AccessCredentials credentials = currentAccessToken();
             sendGmailMessage(credentials.accessToken(), credentials.senderEmail(),
-                    toEmail, subject, body);
+                    toEmail, subject, body, credentials.replyToEmail());
         } catch (EmailSetupException exception) {
             throw exception;
         } catch (Exception exception) {
@@ -188,7 +215,8 @@ public final class GmailEmailService {
             throws SQLException, IOException, InterruptedException, EmailSetupException {
         requireGoogleClient();
         String sql = """
-            SELECT sender_email, encrypted_refresh_token, encrypted_access_token, access_token_expires_at
+            SELECT sender_email, reply_to_email, encrypted_refresh_token,
+                   encrypted_access_token, access_token_expires_at
             FROM email_sender_config
             WHERE config_id = 1
             FOR UPDATE
@@ -202,6 +230,7 @@ public final class GmailEmailService {
                             "Email password reset is not available because an administrator has not connected a Gmail account.");
                 }
                 String senderEmail = result.getString("sender_email");
+                String replyToEmail = result.getString("reply_to_email");
                 String refreshToken = decrypt(result.getString("encrypted_refresh_token"));
                 String encryptedAccessToken = result.getString("encrypted_access_token");
                 Timestamp expiresAt = result.getTimestamp("access_token_expires_at");
@@ -210,7 +239,7 @@ public final class GmailEmailService {
                         Instant.now().plusSeconds(ACCESS_TOKEN_REFRESH_SKEW_SECONDS))) {
                     String token = decrypt(encryptedAccessToken);
                     connection.commit();
-                    return new AccessCredentials(senderEmail, token);
+                    return new AccessCredentials(senderEmail, token, replyToEmail);
                 }
 
                 JsonNode tokenResponse = postForm(TOKEN_ENDPOINT, form(
@@ -233,7 +262,7 @@ public final class GmailEmailService {
                     update.executeUpdate();
                 }
                 connection.commit();
-                return new AccessCredentials(senderEmail, accessToken);
+                return new AccessCredentials(senderEmail, accessToken, replyToEmail);
             } catch (Exception exception) {
                 connection.rollback();
                 if (exception instanceof EmailSetupException setupException) {
@@ -254,17 +283,18 @@ public final class GmailEmailService {
         }
     }
 
-    private record AccessCredentials(String senderEmail, String accessToken) { }
+    private record AccessCredentials(String senderEmail, String accessToken, String replyToEmail) { }
 
     private static void sendGmailMessage(
-            String accessToken, String senderEmail, String toEmail, String subject, String body)
+            String accessToken, String senderEmail, String toEmail, String subject, String body,
+            String replyToEmail)
             throws IOException, EmailSetupException {
         try {
             MimeMessage message = new MimeMessage(Session.getInstance(new Properties()));
             message.setFrom(new InternetAddress(senderEmail, true));
-            message.setReplyTo(new Address[] {
-                    new InternetAddress("support@yourdomain.com")
-            });
+            if (replyToEmail != null && !replyToEmail.isBlank()) {
+                message.setReplyTo(new Address[] { new InternetAddress(replyToEmail, true) });
+            }
             message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail, true));
             message.setSubject(subject, StandardCharsets.UTF_8.name());
             message.setText(body, StandardCharsets.UTF_8.name());

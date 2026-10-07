@@ -3,6 +3,7 @@ package org.example.admin;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.ws.rs.CookieParam;
+import jakarta.ws.rs.FormParam;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
@@ -84,7 +85,7 @@ public class EmailSetupResource {
             @Context HttpServletRequest request) {
         NewCookie clearState = clearStateCookie();
         Map<String, Object> claims = JwtUtil.verify(state);
-        if (claims == null || stateCookie == null || !state.equals(stateCookie)
+        if (claims == null || !state.equals(stateCookie)
                 || !"gmail-email-setup".equals(claims.get("purpose"))
                 || !isSameAdmin(claims.get("admin_user_id"), securityContext)) {
             return withCookie(setupPage(request,
@@ -156,9 +157,41 @@ public class EmailSetupResource {
         }
     }
 
+    @POST
+    @Path("reply-to")
+    public Response saveReplyTo(
+            @FormParam("replyToEmail") String replyToEmail,
+            @Context HttpServletRequest request) {
+        String normalizedEmail = replyToEmail == null ? "" : replyToEmail.trim();
+        if (!normalizedEmail.isEmpty()) {
+            try {
+                new jakarta.mail.internet.InternetAddress(normalizedEmail, true).validate();
+            } catch (jakarta.mail.internet.AddressException exception) {
+                return setupPage(request, "Enter a valid Reply-To email address.",
+                        Response.Status.BAD_REQUEST);
+            }
+        }
+
+        try {
+            GmailEmailService.saveReplyToEmail(normalizedEmail);
+            String message = normalizedEmail.isEmpty()
+                    ? "The Reply-To address has been removed."
+                    : "Reply-To address saved as " + normalizedEmail + ".";
+            return setupPage(request, message, Response.Status.OK);
+        } catch (GmailEmailService.EmailSetupException exception) {
+            return setupPage(request, exception.getMessage(), Response.Status.BAD_REQUEST);
+        } catch (SQLException exception) {
+            LOGGER.log(Level.SEVERE, "Unable to save the Gmail Reply-To address.", exception);
+            return setupPage(request,
+                    "Unable to save the Reply-To address. Verify the reply_to_email database column exists.",
+                    Response.Status.INTERNAL_SERVER_ERROR);
+        }
+    }
+
     private Response setupPage(HttpServletRequest request, String message, Response.Status status) {
         String base = base(request);
         String sender;
+        String replyToEmail;
         try {
             sender = GmailEmailService.validateStoredAuthorization();
         } catch (GmailEmailService.EmailSetupException exception) {
@@ -185,6 +218,17 @@ public class EmailSetupResource {
             }
         }
 
+        try {
+            replyToEmail = GmailEmailService.getReplyToEmail();
+        } catch (SQLException exception) {
+            LOGGER.log(Level.WARNING, "Unable to read the Gmail Reply-To address.", exception);
+            replyToEmail = null;
+            if (message == null) {
+                message = "Reply-To settings are unavailable. Verify the reply_to_email database column exists.";
+                status = Response.Status.SERVICE_UNAVAILABLE;
+            }
+        }
+
         String content = "<h2>Email Setup</h2>"
                 + "<p>This is the global sender mailbox used for forgot-password emails. "
                 + "Any administrator can connect a Google account; connecting another account replaces the current sender.</p>"
@@ -194,6 +238,14 @@ public class EmailSetupResource {
                 : "<p>Status: Connected as <strong>" + escape(sender) + "</strong>.</p>")
                 + "<p><a href=\"" + escape(base) + "/api/admin/email-setup/authorize\">"
                 + (sender == null ? "Connect Gmail" : "Reconnect / change sender") + "</a></p>"
+                + "<h3>Reply-To address</h3>"
+                + "<p>Optionally choose where recipients' replies should go. Leave blank to omit the Reply-To header.</p>"
+                + "<form method=\"post\" action=\"" + escape(base)
+                + "/api/admin/email-setup/reply-to\">"
+                + "<label for=\"replyToEmail\">Reply-To email</label> "
+                + "<input type=\"email\" id=\"replyToEmail\" name=\"replyToEmail\" maxlength=\"320\" value=\""
+                + escape(replyToEmail) + "\"> "
+                + "<button type=\"submit\">Save Reply-To</button></form>"
                 + (sender == null ? "" : "<form method=\"post\" action=\""
                 + escape(base) + "/api/admin/email-setup/disconnect\">"
                 + "<button type=\"submit\">Disconnect email sending</button></form>")
