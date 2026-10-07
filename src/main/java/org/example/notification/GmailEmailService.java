@@ -2,6 +2,7 @@ package org.example.notification;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.mail.Address;
 import jakarta.mail.Message;
 import jakarta.mail.Session;
 import jakarta.mail.internet.InternetAddress;
@@ -261,6 +262,9 @@ public final class GmailEmailService {
         try {
             MimeMessage message = new MimeMessage(Session.getInstance(new Properties()));
             message.setFrom(new InternetAddress(senderEmail, true));
+            message.setReplyTo(new Address[] {
+                    new InternetAddress("support@yourdomain.com")
+            });
             message.setRecipient(Message.RecipientType.TO, new InternetAddress(toEmail, true));
             message.setSubject(subject, StandardCharsets.UTF_8.name());
             message.setText(body, StandardCharsets.UTF_8.name());

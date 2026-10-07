@@ -51,10 +51,9 @@ public class ForgotPasswordResource {
     private static final int REQUEST_LIFETIME_MINUTES = 60;// a request cannot be resent after this
     private static final int KEEP_ROWS_DAYS = 90;          // old rows are deleted after this
     private static final long CLEANUP_INTERVAL_MILLIS = 10 * 60 * 1000L;
-    // "Today" for the daily limit is a calendar day in this time zone.
+
     private static final ZoneId DAY_ZONE = ZoneId.of("Asia/Kolkata");
 
-    // Same wording for real and non-existent accounts (prevents account guessing).
     private static final String SENT_MESSAGE =
             "If an account exists for this email, a verification code has been sent.";
     private static final String RESENT_MESSAGE =
@@ -64,8 +63,6 @@ public class ForgotPasswordResource {
 
     private static volatile long lastCleanupMillis = 0;
 
-    // OTPs are sent on a background thread so a slow SMS/email provider does not
-    // make the response slower for real accounts than for non-existent ones.
     private static final ExecutorService SENDER =
             Executors.newFixedThreadPool(2, runnable -> {
                 Thread thread = new Thread(runnable, "otp-sender");
@@ -73,9 +70,6 @@ public class ForgotPasswordResource {
                 return thread;
             });
 
-    // ==================================================================
-    // STEP 1 - request the code
-    // ==================================================================
     @POST
     @Path("request")
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)

@@ -616,7 +616,7 @@ public class AuthResource {
 
         try (PreparedStatement statement =
                      connection.prepareStatement(
-                             "SELECT 1 FROM users WHERE email = ?")) {
+                             "SELECT 1 FROM users WHERE lower(email) = lower(?)")) {
 
             statement.setString(1, email);
 
