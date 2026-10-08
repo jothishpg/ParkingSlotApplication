@@ -253,10 +253,12 @@ public final class MetaOAuthService {
         AppConfig config = requiredConfig();
         List<SystemUser> users = systemUsers(businessId, userToken);
         SystemUser admin = users.stream().filter(SystemUser::admin).findFirst().orElse(null);
+        System.out.println(users + " " + admin);
         if (admin == null) {
             admin = createAdminSystemUser(businessId, userToken);
             users.add(admin);
         }
+        System.out.println("After post");
         String adminSystemUserId = admin.id();
         users.removeIf(user -> user.admin() && !user.id().equals(adminSystemUserId));
 
@@ -268,9 +270,11 @@ public final class MetaOAuthService {
                     ? ADMIN_SYSTEM_USER_SCOPES : EMPLOYEE_SYSTEM_USER_SCOPES;
             if (!isSelectedAdmin) {
                 for (Waba waba : wabas) {
+                    System.out.println(user.id);
                     assignWabaToSystemUser(waba.id(), user.id(), userToken, businessId);
                 }
             }
+
             Token generated = generateSystemUserToken(user.id(), config.appId(), userToken,
                     businessId, requestedScopes, config);
             prepared.add(new PersistedSystemUser(normalizedUser, generated));
@@ -325,6 +329,7 @@ public final class MetaOAuthService {
     private static List<SystemUser> systemUsers(String businessId, String userToken)
             throws MetaApiException, IOException, InterruptedException {
         List<SystemUser> users = new ArrayList<>();
+        System.out.println("System_Users_done");
         for (JsonNode item : graphList("/" + encodePath(businessId) + "/system_users",
                 Map.of("fields", "id,name,role"), userToken)) {
             String id = item.path("id").asText("");
@@ -342,6 +347,7 @@ public final class MetaOAuthService {
 
     private static SystemUser createAdminSystemUser(String businessId, String userToken)
             throws MetaApiException, IOException, InterruptedException {
+        System.out.println("In post");
         JsonNode created = graphPost("/" + encodePath(businessId) + "/system_users",
                 Map.of("name", "Parking System Admin", "role", "ADMIN"), userToken);
         return new SystemUser(requiredText(created, "id"),
@@ -352,19 +358,19 @@ public final class MetaOAuthService {
                                                String userToken, String businessId)
             throws MetaApiException, IOException, InterruptedException {
         graphPost("/" + encodePath(wabaId) + "/assigned_users",
-                Map.of("user", systemUserId, "tasks", "[\"MANAGE\",\"DEVELOP\"]",
+                Map.of("user", systemUserId, "tasks", "[\"DEVELOP\"]",
                         "business", businessId),
                 userToken);
     }
 
     private static Token generateSystemUserToken(String systemUserId, String appId,
-                                                String userToken, String businessId,
-                                                Set<String> requestedScopes, AppConfig config)
+                                                 String userToken, String businessId,
+                                                 Set<String> requestedScopes, AppConfig config)
             throws MetaApiException, IOException, InterruptedException {
         String requested = String.join(",", requestedScopes);
         JsonNode response = graphPost("/" + encodePath(businessId) + "/access_tokens",
-            Map.of("business_app", appId, "scope", requested,
-                    "system_user_id", systemUserId), userToken);
+                Map.of("business_app", appId, "scope", requested,
+                        "system_user_id", systemUserId), userToken);
         String value = requiredText(response, "access_token");
         Set<String> granted = debugToken(value, config);
         Set<String> missing = new LinkedHashSet<>(requestedScopes);
@@ -612,6 +618,7 @@ public final class MetaOAuthService {
             throws MetaApiException, IOException, InterruptedException {
         Map<String, String> query = new LinkedHashMap<>(parameters);
         String url = GRAPH_BASE + path + queryString(query);
+        System.out.println(url);
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(url)).GET();
         if (token != null) {
             request.header("Authorization", "Bearer " + token);
@@ -635,6 +642,7 @@ public final class MetaOAuthService {
                                             String token)
             throws MetaApiException, IOException, InterruptedException {
         List<JsonNode> result = new ArrayList<>();
+        System.out.println("graph List");
         JsonNode response = graphGet(path, parameters, token);
         while (true) {
             JsonNode data = response.path("data");
@@ -669,6 +677,7 @@ public final class MetaOAuthService {
     private static JsonNode send(HttpRequest request)
             throws MetaApiException, IOException, InterruptedException {
         HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+        System.out.println("send");
         JsonNode body;
         try {
             body = JSON.readTree(response.body());
@@ -676,6 +685,8 @@ public final class MetaOAuthService {
             throw new MetaApiException("Meta returned an unreadable response (HTTP "
                     + response.statusCode() + ").", exception);
         }
+        System.out.println("done2");
+        System.out.println(response + "\n" + body);
         if (response.statusCode() < 200 || response.statusCode() >= 300 || body.has("error")) {
             JsonNode error = body.path("error");
             StringBuilder detail = new StringBuilder();
@@ -695,6 +706,7 @@ public final class MetaOAuthService {
             LOGGER.severe("Full Meta error response: " + body.toString()); // log raw JSON entirely
             throw new MetaApiException(detail.toString(), error.path("code").asText(""));
         }
+        System.out.println("body done");
         return body;
     }
 

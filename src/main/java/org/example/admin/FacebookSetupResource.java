@@ -285,6 +285,7 @@ public class FacebookSetupResource {
                 phonesByWaba.put(waba.id(),
                         MetaOAuthService.phoneNumbers(waba.id(), flow.userToken()));
             }
+            System.out.println("PhoneNumber " + flow.userToken);
             boolean hasPhoneNumber = phonesByWaba.values().stream().anyMatch(list -> !list.isEmpty());
             if (!hasPhoneNumber) {
                 return setupPage(request, getConfigSafely(),
@@ -294,6 +295,7 @@ public class FacebookSetupResource {
             }
             MetaOAuthService.persistCompletedSetup(flow.adminId(), flow.businessId(),
                     flow.businessName(), selected, phonesByWaba, flow.userToken());
+            System.out.println("System users " + flow.userToken);
             return withCookies(setupPage(request, MetaOAuthService.status(),
                     "Facebook and WhatsApp setup completed successfully.",
                     Response.Status.OK), cookie(TEMP_COOKIE, "", 0));
