@@ -103,6 +103,59 @@ public final class TwoFactorService {
         return recoveryCodes;
     }
 
+    public static List<String> confirmRecoveryEnrollment(
+            Connection connection, long userId, String code)
+            throws SQLException, GeneralSecurityException {
+        String pendingCiphertext;
+        try (PreparedStatement statement = connection.prepareStatement("""
+                SELECT secret_ciphertext, pending_secret_ciphertext, pending_secret_expires_at
+                FROM user_two_factor
+                WHERE user_id = ?
+                FOR UPDATE
+                """)) {
+            statement.setLong(1, userId);
+            try (ResultSet result = statement.executeQuery()) {
+                if (!result.next() || result.getString("secret_ciphertext") == null
+                        || result.getString("pending_secret_ciphertext") == null
+                        || result.getTimestamp("pending_secret_expires_at") == null
+                        || result.getTimestamp("pending_secret_expires_at").toInstant()
+                        .isBefore(Instant.now())) {
+                    return null;
+                }
+                pendingCiphertext = result.getString("pending_secret_ciphertext");
+            }
+        }
+
+        long counter = matchingCounter(decrypt(pendingCiphertext), code);
+        if (counter < 0) {
+            return null;
+        }
+        try (PreparedStatement statement = connection.prepareStatement(
+                "DELETE FROM user_two_factor_recovery_codes WHERE user_id = ?")) {
+            statement.setLong(1, userId);
+            statement.executeUpdate();
+        }
+        List<String> recoveryCodes = createRecoveryCodes(connection, userId);
+        try (PreparedStatement statement = connection.prepareStatement("""
+                UPDATE user_two_factor
+                SET secret_ciphertext = pending_secret_ciphertext,
+                    pending_secret_ciphertext = NULL,
+                    pending_secret_expires_at = NULL,
+                    last_totp_counter = ?,
+                    failed_login_attempts = 0,
+                    login_locked_until = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND secret_ciphertext IS NOT NULL
+                """)) {
+            statement.setLong(1, counter);
+            statement.setLong(2, userId);
+            if (statement.executeUpdate() != 1) {
+                throw new SQLException("Authenticator recovery could not update the user's factor.");
+            }
+        }
+        return recoveryCodes;
+    }
+
     public static UUID createLoginChallenge(Connection connection, long userId)
             throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("""

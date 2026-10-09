@@ -285,7 +285,6 @@ public class FacebookSetupResource {
                 phonesByWaba.put(waba.id(),
                         MetaOAuthService.phoneNumbers(waba.id(), flow.userToken()));
             }
-            System.out.println("PhoneNumber " + flow.userToken);
             boolean hasPhoneNumber = phonesByWaba.values().stream().anyMatch(list -> !list.isEmpty());
             if (!hasPhoneNumber) {
                 return setupPage(request, getConfigSafely(),
@@ -293,12 +292,12 @@ public class FacebookSetupResource {
                                 + "Register a WhatsApp phone number and retry.",
                         Response.Status.BAD_REQUEST);
             }
-            MetaOAuthService.persistCompletedSetup(flow.adminId(), flow.businessId(),
+            List<MetaOAuthService.SystemUserAccess> access =
+                    MetaOAuthService.persistCompletedSetup(flow.adminId(), flow.businessId(),
                     flow.businessName(), selected, phonesByWaba, flow.userToken());
-            System.out.println("System users " + flow.userToken);
             return withCookies(setupPage(request, MetaOAuthService.status(),
                     "Facebook and WhatsApp setup completed successfully.",
-                    Response.Status.OK), cookie(TEMP_COOKIE, "", 0));
+                    Response.Status.OK, access), cookie(TEMP_COOKIE, "", 0));
         } catch (MetaOAuthService.MetaApiException exception) {
             return setupPage(request, getConfigSafely(), exception.getMessage(),
                     Response.Status.BAD_REQUEST);
@@ -322,6 +321,12 @@ public class FacebookSetupResource {
 
     private Response setupPage(HttpServletRequest request, MetaOAuthService.AppConfig config,
                                String message, Response.Status status) {
+        return setupPage(request, config, message, status, List.of());
+    }
+
+    private Response setupPage(HttpServletRequest request, MetaOAuthService.AppConfig config,
+                               String message, Response.Status status,
+                               List<MetaOAuthService.SystemUserAccess> access) {
         String base = base(request);
         String connected = config != null && config.connected()
                 ? "<p>Status: Connected to Business Portfolio <strong>"
@@ -349,9 +354,34 @@ public class FacebookSetupResource {
         String authorize = config == null ? ""
                 : "<p><a href=\"" + escape(base)
                 + "/api/admin/facebook-setup/authorize\">Connect Facebook / WhatsApp</a></p>";
+        String templates = config != null && config.connected()
+                ? "<p><a href=\"" + escape(base)
+                + "/api/admin/facebook-setup/templates\">Templates</a></p>"
+                : "";
+        StringBuilder accessHtml = new StringBuilder();
+        if (!access.isEmpty()) {
+            accessHtml.append("<h2>System users</h2>")
+                    .append("<p>Done means MANAGE or DEVELOP access to every selected WABA. ")
+                    .append("Grant missing access in Meta Business Settings, then run setup again to generate tokens.</p>")
+                    .append("<table><thead><tr><th>System user</th><th>ID</th><th>Role</th>")
+                    .append("<th>WABA access</th><th>Missing WABAs</th></tr></thead><tbody>");
+            for (MetaOAuthService.SystemUserAccess user : access) {
+                accessHtml.append("<tr><td>").append(escape(user.name())).append("</td><td>")
+                        .append(escape(user.id())).append("</td><td>")
+                        .append(user.admin() ? "Admin" : "Employee").append("</td><td>")
+                        .append(user.done() ? "Done" : "Not done").append("</td><td>");
+                List<String> missing = new ArrayList<>();
+                for (MetaOAuthService.Waba waba : user.missingWabas()) {
+                    missing.add(escape(waba.name()) + " (ID: " + escape(waba.id()) + ")");
+                }
+                accessHtml.append(missing.isEmpty() ? "None" : String.join(", ", missing))
+                        .append("</td></tr>");
+            }
+            accessHtml.append("</tbody></table>");
+        }
         String html = "<h1>Parking Management System</h1>"
                 + "<h2>Facebook / WhatsApp Setup</h2>" + messageHtml + connected
-                + credentials + form + authorize
+                + accessHtml + credentials + form + authorize + templates
                 + "<p><a href=\"" + escape(base) + "/api/admin\">Admin Dashboard</a></p>"
                 + "<form method=\"post\" action=\"" + escape(base) + "/api/auth/logout\">"
                 + "<button type=\"submit\">Logout</button></form>";

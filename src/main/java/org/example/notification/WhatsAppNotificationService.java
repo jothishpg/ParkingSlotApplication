@@ -59,7 +59,8 @@ public final class WhatsAppNotificationService {
                     parameters.put("slot_name", result.getString("slot_name"));
                     parameters.put("start_time", result.getTimestamp("start_time").toString());
 
-                    sendTemplate(result.getString("phone_number"), "parking_booking_confirmed", parameters);
+                    sendAssignedTemplate(result.getString("phone_number"),
+                            "BOOKING_CONFIRMATION", parameters);
                 }
             }
         } catch (SQLException exception) {
@@ -87,7 +88,8 @@ public final class WhatsAppNotificationService {
                     parameters.put("total_duration", result.getBigDecimal("total_duration") + " min");
                     parameters.put("amount", result.getBigDecimal("amount").toString());
 
-                    sendTemplate(result.getString("phone_number"), "parking_session_completed", parameters);
+                    sendAssignedTemplate(result.getString("phone_number"),
+                            "CHECKOUT_CONFIRMATION", parameters);
                 } else {
                     LOGGER.warning("Checkout notification skipped: booking details not found for booking "
                             + bookingId + ".");
@@ -114,6 +116,74 @@ public final class WhatsAppNotificationService {
             String phoneNumber,
             String templateName,
             Map<String, String> parameters) {
+        sendTemplate(phoneNumber, templateName, "en_US", parameters, null, false);
+    }
+
+    private static void sendAssignedTemplate(String phoneNumber, String messageKey,
+                                             Map<String, String> parameters) {
+        final WhatsAppTemplateAssignments.MessageType messageType;
+        try {
+            messageType = WhatsAppTemplateAssignments.messageType(messageKey);
+        } catch (SQLException exception) {
+            LOGGER.log(Level.WARNING, "Unable to read the WhatsApp template assignment for "
+                    + messageKey + "; notification was not sent.", exception);
+            return;
+        }
+        if (messageType == null || messageType.templateId() == null) {
+            LOGGER.info("WhatsApp notification skipped: no template is assigned to "
+                    + messageKey + ".");
+            return;
+        }
+
+        try {
+            MetaOAuthService.MessageTemplate template =
+                    MetaOAuthService.messageTemplate(messageType.templateId());
+            if (!"APPROVED".equalsIgnoreCase(template.status())) {
+                LOGGER.warning("WhatsApp notification skipped: assigned template "
+                        + template.name() + " is no longer approved.");
+                return;
+            }
+            if (!template.name().equals(messageType.templateName())
+                    || !template.language().equals(messageType.languageCode())) {
+                LOGGER.warning("WhatsApp notification skipped: assigned template details changed. "
+                        + "Review the " + messageKey + " assignment.");
+                return;
+            }
+            WhatsAppTemplateAssignments.Compatibility compatibility =
+                    WhatsAppTemplateAssignments.compatibility(template.components(),
+                            messageType.requiredBodyVariableCount());
+            if (!compatibility.compatible()) {
+                LOGGER.warning("WhatsApp notification skipped: assigned template "
+                        + template.name() + " is no longer compatible: "
+                        + compatibility.reason());
+                return;
+            }
+            if (parameters.size() != compatibility.bodyVariables().size()) {
+                LOGGER.warning("WhatsApp notification skipped: the application supplied "
+                        + parameters.size() + " values for "
+                        + compatibility.bodyVariables().size() + " template variables.");
+                return;
+            }
+            boolean named = "NAMED".equalsIgnoreCase(
+                    template.details().path("parameter_format").asText("POSITIONAL"));
+            sendTemplate(phoneNumber, template.name(), template.language(), parameters,
+                    compatibility.bodyVariables(), named);
+        } catch (MetaOAuthService.MetaApiException | IOException | SQLException exception) {
+            LOGGER.log(Level.WARNING, "Unable to validate assigned WhatsApp template for "
+                    + messageKey + "; notification was not sent.", exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            LOGGER.log(Level.WARNING, "Validation of the assigned WhatsApp template was "
+                    + "interrupted; notification was not sent.", exception);
+        } catch (RuntimeException exception) {
+            LOGGER.log(Level.SEVERE, "Unexpected error validating assigned WhatsApp template for "
+                    + messageKey + "; notification was not sent.", exception);
+        }
+    }
+
+    private static void sendTemplate(String phoneNumber, String templateName, String language,
+                                     Map<String, String> parameters, List<String> variableNames,
+                                     boolean namedParameters) {
         if (PHONE_NUMBER_ID.isBlank() || ACCESS_TOKEN.isBlank()) {
             LOGGER.warning("WhatsApp notification failed: Meta credentials are not configured.");
             return;
@@ -140,14 +210,21 @@ public final class WhatsAppNotificationService {
 
         Map<String, Object> template = new LinkedHashMap<>();
         template.put("name", templateName);
-        template.put("language", Map.of("code", "en_US"));
+        template.put("language", Map.of("code", language));
         if (parameters != null && !parameters.isEmpty()) {
             List<Map<String, String>> bodyParameters = new ArrayList<>();
-            for (Map.Entry<String, String> parameter : parameters.entrySet()) {
-                bodyParameters.add(Map.of(
-                        "type", "text",
-                        "parameter_name", parameter.getKey(),
-                        "text", parameter.getValue()));
+            List<String> values = new ArrayList<>(parameters.values());
+            for (int index = 0; index < values.size(); index++) {
+                Map<String, String> bodyParameter = new LinkedHashMap<>();
+                bodyParameter.put("type", "text");
+                if (namedParameters) {
+                    bodyParameter.put("parameter_name", variableNames.get(index));
+                } else if (variableNames == null) {
+                    bodyParameter.put("parameter_name",
+                            new ArrayList<>(parameters.keySet()).get(index));
+                }
+                bodyParameter.put("text", values.get(index));
+                bodyParameters.add(bodyParameter);
             }
             template.put("components", List.of(Map.of(
                     "type", "body",

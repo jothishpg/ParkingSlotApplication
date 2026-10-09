@@ -4,13 +4,18 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.config.DatabaseConnection;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -18,6 +23,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -64,7 +70,17 @@ public final class MetaOAuthService {
 
     private record SystemUser(String id, String name, boolean admin) { }
 
-    private record PersistedSystemUser(SystemUser user, Token token) { }
+    private record PersistedSystemUser(SystemUser user, Token token,
+                                       Map<String, Set<String>> assignments) { }
+
+    public record SystemUserAccess(String id, String name, boolean admin, List<Waba> missingWabas) {
+        public boolean done() {
+            return missingWabas.isEmpty();
+        }
+    }
+
+    public record MessageTemplate(String id, String name, String category, String language,
+                                  String status, JsonNode components, JsonNode details) { }
 
     public static AppConfig status() throws SQLException {
         String sql = """
@@ -245,7 +261,7 @@ public final class MetaOAuthService {
         return result;
     }
 
-    public static void persistCompletedSetup(long adminId, String businessId, String businessName,
+    public static List<SystemUserAccess> persistCompletedSetup(long adminId, String businessId, String businessName,
                                              List<Waba> wabas,
                                              Map<String, List<PhoneNumber>> phonesByWaba,
                                              String userToken)
@@ -253,34 +269,45 @@ public final class MetaOAuthService {
         AppConfig config = requiredConfig();
         List<SystemUser> users = systemUsers(businessId, userToken);
         SystemUser admin = users.stream().filter(SystemUser::admin).findFirst().orElse(null);
-        System.out.println(users + " " + admin);
         if (admin == null) {
             admin = createAdminSystemUser(businessId, userToken);
             users.add(admin);
         }
-        System.out.println("After post");
-        String adminSystemUserId = admin.id();
-        users.removeIf(user -> user.admin() && !user.id().equals(adminSystemUserId));
 
+        Map<String, Map<String, Set<String>>> assignmentsByWaba = new LinkedHashMap<>();
+        for (Waba waba : wabas) {
+            assignmentsByWaba.put(waba.id(), wabaAssignments(waba.id(), businessId, userToken));
+        }
+        List<SystemUserAccess> access = new ArrayList<>();
         List<PersistedSystemUser> prepared = new ArrayList<>();
         for (SystemUser user : users) {
             boolean isSelectedAdmin = user.id().equals(admin.id());
             SystemUser normalizedUser = new SystemUser(user.id(), user.name(), isSelectedAdmin);
             Set<String> requestedScopes = isSelectedAdmin
                     ? ADMIN_SYSTEM_USER_SCOPES : EMPLOYEE_SYSTEM_USER_SCOPES;
-            if (!isSelectedAdmin) {
-                for (Waba waba : wabas) {
-                    System.out.println(user.id);
-                    assignWabaToSystemUser(waba.id(), user.id(), userToken, businessId);
+            Map<String, Set<String>> assignments = new LinkedHashMap<>();
+            List<Waba> missing = new ArrayList<>();
+            for (Waba waba : wabas) {
+                Set<String> tasks = assignmentsByWaba.get(waba.id()).get(user.id());
+                if (tasks == null || (!tasks.contains("MANAGE") && !tasks.contains("DEVELOP"))) {
+                    missing.add(waba);
+                } else {
+                    assignments.put(waba.id(), tasks);
                 }
+            }
+            access.add(new SystemUserAccess(user.id(), user.name(), user.admin(), List.copyOf(missing)));
+            // Keep the existing single-admin token flow; report every discovered user.
+            if ((user.admin() && !isSelectedAdmin) || (!user.admin() && assignments.isEmpty())) {
+                continue;
             }
 
             Token generated = generateSystemUserToken(user.id(), config.appId(), userToken,
-                    businessId, requestedScopes, config);
-            prepared.add(new PersistedSystemUser(normalizedUser, generated));
+                    requestedScopes, config);
+            prepared.add(new PersistedSystemUser(normalizedUser, generated, assignments));
         }
 
         persistDatabaseSetup(adminId, businessId, businessName, wabas, phonesByWaba, prepared);
+        return List.copyOf(access);
     }
 
     public static MessagingCredentials messagingCredentials()
@@ -324,12 +351,249 @@ public final class MetaOAuthService {
         }
     }
 
+    public static List<MessageTemplate> messageTemplates()
+            throws SQLException, IOException, InterruptedException, MetaApiException {
+        TemplateCredentials credentials = templateCredentials();
+        return messageTemplates(credentials);
+    }
+
+    private static List<MessageTemplate> messageTemplates(TemplateCredentials credentials)
+            throws IOException, InterruptedException, MetaApiException {
+        List<MessageTemplate> templates = new ArrayList<>();
+        for (JsonNode item : graphList("/" + encodePath(credentials.wabaId())
+                        + "/message_templates",
+                Map.of("fields", "id,name,category,language,status,components,quality_score,"
+                        + "rejected_reason,parameter_format,previous_category,correct_category,"
+                        + "sub_category,last_updated_time", "limit", "100"),
+                credentials.accessToken())) {
+            templates.add(messageTemplate(item));
+        }
+        return List.copyOf(templates);
+    }
+
+    public static MessageTemplate messageTemplate(String templateId)
+            throws SQLException, IOException, InterruptedException, MetaApiException {
+        validateIdentifier(templateId, "template ID");
+        TemplateCredentials credentials = templateCredentials();
+        return findTemplate(messageTemplates(credentials), templateId);
+    }
+
+    public static void createMessageTemplate(String name, String category, String language,
+                                             String parameterFormat, String componentsJson)
+            throws SQLException, IOException, InterruptedException, MetaApiException {
+        validateTemplateName(name);
+        validateTemplateCategory(category);
+        validateTemplateLanguage(language);
+        JsonNode components = validateTemplateComponents(componentsJson);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("name", name);
+        payload.put("category", category);
+        payload.put("language", language);
+        payload.put("components", components);
+        if (parameterFormat != null && !parameterFormat.isBlank()) {
+            if (!Set.of("POSITIONAL", "NAMED").contains(parameterFormat)) {
+                throw new MetaApiException("Choose a valid template parameter format.");
+            }
+            payload.put("parameter_format", parameterFormat);
+        }
+        TemplateCredentials credentials = templateCredentials();
+        graphPostJson("/" + encodePath(credentials.wabaId()) + "/message_templates",
+                JSON.writeValueAsString(payload), credentials.accessToken());
+    }
+
+    public static void updateMessageTemplate(String templateId, String category,
+                                             String parameterFormat,
+                                             boolean allowCategoryChange, String componentsJson)
+            throws SQLException, IOException, InterruptedException, MetaApiException {
+        validateIdentifier(templateId, "template ID");
+        if (category != null && !category.isBlank()) {
+            validateTemplateCategory(category);
+        }
+        JsonNode components = validateTemplateComponents(componentsJson);
+        TemplateCredentials credentials = templateCredentials();
+        MessageTemplate current = findTemplate(messageTemplates(credentials), templateId);
+        if (!Set.of("APPROVED", "REJECTED").contains(current.status().toUpperCase())) {
+            throw new MetaApiException("Only approved or rejected templates can be edited.");
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("components", components);
+        if (parameterFormat != null && !parameterFormat.isBlank()) {
+            if (!Set.of("POSITIONAL", "NAMED").contains(parameterFormat)) {
+                throw new MetaApiException("Choose a valid template parameter format.");
+            }
+            payload.put("parameter_format", parameterFormat);
+        }
+        if (category != null && !category.isBlank()) {
+            payload.put("category", category);
+            payload.put("allow_category_change", allowCategoryChange);
+        }
+        graphPostJson("/" + encodePath(templateId), JSON.writeValueAsString(payload),
+                credentials.accessToken());
+    }
+
+    public static void deleteMessageTemplate(String templateId, String name)
+            throws SQLException, IOException, InterruptedException, MetaApiException {
+        validateIdentifier(templateId, "template ID");
+        validateTemplateName(name);
+        TemplateCredentials credentials = templateCredentials();
+        MessageTemplate template = findTemplate(messageTemplates(credentials), templateId);
+        if (!template.name().equals(name)) {
+            throw new MetaApiException("The selected template no longer matches the current "
+                    + "WhatsApp Business Account. Refresh the template list and try again.");
+        }
+        graphDelete("/" + encodePath(credentials.wabaId()) + "/message_templates",
+                Map.of("name", name, "hsm_id", templateId), credentials.accessToken());
+    }
+
+    public static String uploadTemplateMedia(InputStream media, long contentLength,
+                                             String contentType)
+            throws SQLException, IOException, InterruptedException, MetaApiException {
+        if (media == null || contentType == null) {
+            throw new MetaApiException("Select a media file to upload.");
+        }
+        if (!Set.of("image/jpeg", "image/png").contains(contentType.toLowerCase())) {
+            throw new MetaApiException("Template header image examples support JPEG and PNG only.");
+        }
+        long maxBytes = 5L * 1024 * 1024;
+        if (contentLength < 1 || contentLength > maxBytes) {
+            throw new MetaApiException("The selected file is empty or exceeds the "
+                    + (maxBytes / (1024 * 1024)) + " MB limit for " + contentType + ".");
+        }
+        TemplateCredentials credentials = templateCredentials();
+        AppConfig config = requiredConfig();
+        URI sessionUri = URI.create(GRAPH_BASE + "/" + encodePath(config.appId())
+                + "/uploads" + queryString(Map.of("file_length",
+                Long.toString(contentLength), "file_type", contentType)));
+        HttpRequest sessionRequest = HttpRequest.newBuilder(sessionUri)
+                .header("Authorization", "Bearer " + credentials.accessToken())
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+        JsonNode session = send(sessionRequest);
+        String uploadId = requiredText(session, "id");
+        URI uploadUri = URI.create(GRAPH_BASE + "/" + encodePath(uploadId));
+        HttpRequest.BodyPublisher stream = HttpRequest.BodyPublishers.fromPublisher(
+                HttpRequest.BodyPublishers.ofInputStream(() -> media), contentLength);
+        HttpRequest uploadRequest = HttpRequest.newBuilder(uploadUri)
+                .header("Authorization", "Bearer " + credentials.accessToken())
+                .header("file_offset", "0")
+                .header("Content-Type", "application/octet-stream")
+                .POST(stream)
+                .build();
+        return requiredText(send(uploadRequest), "h");
+    }
+
+    private static MessageTemplate messageTemplate(JsonNode item) throws MetaApiException {
+        String id = requiredText(item, "id");
+        return new MessageTemplate(id,
+                item.path("name").asText(""),
+                item.path("category").asText(""),
+                item.path("language").asText(""),
+                item.path("status").asText(""),
+                item.path("components"),
+                item.deepCopy());
+    }
+
+    private static MessageTemplate findTemplate(List<MessageTemplate> templates, String templateId)
+            throws MetaApiException {
+        return templates.stream()
+                .filter(template -> template.id().equals(templateId))
+                .findFirst()
+                .orElseThrow(() -> new MetaApiException("The selected template is not available "
+                        + "in the connected WhatsApp Business Account."));
+    }
+
+    private static TemplateCredentials templateCredentials()
+            throws SQLException, IOException {
+        String sql = """
+            SELECT a.waba_id, t.encrypted_access_token
+            FROM meta_system_user su
+            JOIN meta_system_user_token t ON t.system_user_id = su.system_user_id
+            JOIN meta_system_user_token_permission pm
+              ON pm.token_id = t.token_id
+             AND pm.permission = ?
+            JOIN meta_system_user_waba_assignment a
+              ON a.system_user_id = su.system_user_id
+             AND a.meta_task IN ('MANAGE', 'DEVELOP')
+            JOIN meta_waba w
+              ON w.waba_id = a.waba_id AND w.is_active = TRUE
+            WHERE su.role = 'EMPLOYEE'
+              AND su.is_active = TRUE
+              AND t.status = 'ACTIVE'
+              AND (t.expires_at IS NULL OR t.expires_at > CURRENT_TIMESTAMP)
+            ORDER BY random()
+            LIMIT 1
+            """;
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, WHATSAPP_MANAGEMENT);
+            try (ResultSet result = statement.executeQuery()) {
+                if (!result.next()) {
+                    throw new SQLException("No active employee system-user token has "
+                            + "WhatsApp management access to the connected WABA.");
+                }
+                return new TemplateCredentials(result.getString("waba_id"),
+                        MetaTokenCrypto.decrypt(result.getString("encrypted_access_token")));
+            }
+        }
+    }
+
+    private static void validateTemplateName(String name) throws MetaApiException {
+        if (name == null || !name.matches("[a-z0-9_]{1,512}")) {
+            throw new MetaApiException("Template names must contain only lowercase letters, "
+                    + "numbers, and underscores (maximum 512 characters).");
+        }
+    }
+
+    private static void validateTemplateCategory(String category) throws MetaApiException {
+        if (category == null || !Set.of("AUTHENTICATION", "MARKETING", "UTILITY")
+                .contains(category)) {
+            throw new MetaApiException("Choose Authentication, Marketing, or Utility "
+                    + "as the template category.");
+        }
+    }
+
+    private static void validateTemplateLanguage(String language) throws MetaApiException {
+        if (language == null
+                || !language.matches("[a-zA-Z]{2,3}(?:_[a-zA-Z0-9]{2,8})?")) {
+            throw new MetaApiException("Enter a valid Meta language code, for example en_US.");
+        }
+    }
+
+    private static JsonNode validateTemplateComponents(String componentsJson)
+            throws MetaApiException {
+        if (componentsJson == null || componentsJson.length() > 65536) {
+            throw new MetaApiException("Template components are required and must be under 64 KB.");
+        }
+        try {
+            JsonNode components = JSON.readTree(componentsJson);
+            if (components == null || !components.isArray() || components.isEmpty()) {
+                throw new MetaApiException("Template components must be a non-empty JSON array.");
+            }
+            for (JsonNode component : components) {
+                if (!component.isObject() || component.path("type").asText("").isBlank()) {
+                    throw new MetaApiException("Each template component must be an object "
+                            + "with a type.");
+                }
+            }
+            return components;
+        } catch (IOException exception) {
+            throw new MetaApiException("Template components must be valid JSON.", exception);
+        }
+    }
+
+    private static void validateIdentifier(String value, String label) throws MetaApiException {
+        if (value == null || !value.matches("[A-Za-z0-9_-]{1,128}")) {
+            throw new MetaApiException("The " + label + " is invalid.");
+        }
+    }
+
+    private record TemplateCredentials(String wabaId, String accessToken) { }
+
     public record MessagingCredentials(String accessToken, String phoneNumberId) { }
 
     private static List<SystemUser> systemUsers(String businessId, String userToken)
             throws MetaApiException, IOException, InterruptedException {
         List<SystemUser> users = new ArrayList<>();
-        System.out.println("System_Users_done");
         for (JsonNode item : graphList("/" + encodePath(businessId) + "/system_users",
                 Map.of("fields", "id,name,role"), userToken)) {
             String id = item.path("id").asText("");
@@ -347,30 +611,37 @@ public final class MetaOAuthService {
 
     private static SystemUser createAdminSystemUser(String businessId, String userToken)
             throws MetaApiException, IOException, InterruptedException {
-        System.out.println("In post");
         JsonNode created = graphPost("/" + encodePath(businessId) + "/system_users",
                 Map.of("name", "Parking System Admin", "role", "ADMIN"), userToken);
         return new SystemUser(requiredText(created, "id"),
                 created.path("name").asText("Parking System Admin"), true);
     }
 
-    private static void assignWabaToSystemUser(String wabaId, String systemUserId,
-                                               String userToken, String businessId)
+    private static Map<String, Set<String>> wabaAssignments(String wabaId, String businessId,
+                                                           String userToken)
             throws MetaApiException, IOException, InterruptedException {
-        graphPost("/" + encodePath(wabaId) + "/assigned_users",
-                Map.of("user", systemUserId, "tasks", "[\"DEVELOP\"]",
-                        "business", businessId),
-                userToken);
+        Map<String, Set<String>> assignments = new LinkedHashMap<>();
+        for (JsonNode item : graphList("/" + encodePath(wabaId) + "/assigned_users",
+                Map.of("business", businessId, "fields", "id,tasks"), userToken)) {
+            String id = requiredText(item, "id");
+            Set<String> tasks = assignments.computeIfAbsent(id, ignored -> new LinkedHashSet<>());
+            for (JsonNode task : item.path("tasks")) {
+                tasks.add(task.asText());
+            }
+        }
+        return assignments;
     }
 
     private static Token generateSystemUserToken(String systemUserId, String appId,
-                                                 String userToken, String businessId,
+                                                 String userToken,
                                                  Set<String> requestedScopes, AppConfig config)
             throws MetaApiException, IOException, InterruptedException {
         String requested = String.join(",", requestedScopes);
-        JsonNode response = graphPost("/" + encodePath(businessId) + "/access_tokens",
+        String proof = appSecretProof(userToken,
+                MetaTokenCrypto.decrypt(config.encryptedAppSecret()));
+        JsonNode response = graphPost("/" + encodePath(systemUserId) + "/access_tokens",
                 Map.of("business_app", appId, "scope", requested,
-                        "system_user_id", systemUserId), userToken);
+                        "appsecret_proof", proof), userToken);
         String value = requiredText(response, "access_token");
         Set<String> granted = debugToken(value, config);
         Set<String> missing = new LinkedHashSet<>(requestedScopes);
@@ -386,6 +657,16 @@ public final class MetaOAuthService {
                 ? Instant.ofEpochSecond(expiresAtEpoch)
                 : expiresIn > 0 ? Instant.now().plusSeconds(expiresIn) : null;
         return new Token(value, expiresAt, granted);
+    }
+
+    private static String appSecretProof(String accessToken, String appSecret) {
+        try {
+            Mac hmac = Mac.getInstance("HmacSHA256");
+            hmac.init(new SecretKeySpec(appSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return HexFormat.of().formatHex(hmac.doFinal(accessToken.getBytes(StandardCharsets.UTF_8)));
+        } catch (GeneralSecurityException exception) {
+            throw new IllegalStateException("Unable to calculate Meta app secret proof.", exception);
+        }
     }
 
     private static Set<String> debugToken(String token, AppConfig config)
@@ -510,19 +791,23 @@ public final class MetaOAuthService {
                     if (item.user().admin()) {
                         continue;
                     }
-                    for (Waba waba : wabas) {
+                    for (Map.Entry<String, Set<String>> assignment : item.assignments().entrySet()) {
                         try (PreparedStatement statement = connection.prepareStatement("""
                             INSERT INTO meta_system_user_waba_assignment
                                 (system_user_id, waba_id, meta_task, assigned_at)
-                            VALUES (?, ?, 'MANAGE', CURRENT_TIMESTAMP),
-                                   (?, ?, 'DEVELOP', CURRENT_TIMESTAMP)
+                            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                             ON CONFLICT DO NOTHING
                             """)) {
-                            statement.setLong(1, systemUserId);
-                            statement.setString(2, waba.id());
-                            statement.setLong(3, systemUserId);
-                            statement.setString(4, waba.id());
-                            statement.executeUpdate();
+                            for (String task : assignment.getValue()) {
+                                if (!"MANAGE".equals(task) && !"DEVELOP".equals(task)) {
+                                    continue;
+                                }
+                                statement.setLong(1, systemUserId);
+                                statement.setString(2, assignment.getKey());
+                                statement.setString(3, task);
+                                statement.addBatch();
+                            }
+                            statement.executeBatch();
                         }
                     }
                 }
@@ -618,7 +903,6 @@ public final class MetaOAuthService {
             throws MetaApiException, IOException, InterruptedException {
         Map<String, String> query = new LinkedHashMap<>(parameters);
         String url = GRAPH_BASE + path + queryString(query);
-        System.out.println(url);
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(url)).GET();
         if (token != null) {
             request.header("Authorization", "Bearer " + token);
@@ -638,11 +922,30 @@ public final class MetaOAuthService {
         return send(request);
     }
 
+    private static JsonNode graphPostJson(String path, String json, String token)
+            throws MetaApiException, IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(GRAPH_BASE + path))
+                .header("Authorization", "Bearer " + token)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                .build();
+        return send(request);
+    }
+
+    private static JsonNode graphDelete(String path, Map<String, String> parameters, String token)
+            throws MetaApiException, IOException, InterruptedException {
+        URI uri = URI.create(GRAPH_BASE + path + queryString(parameters));
+        HttpRequest request = HttpRequest.newBuilder(uri)
+                .header("Authorization", "Bearer " + token)
+                .DELETE()
+                .build();
+        return send(request);
+    }
+
     private static List<JsonNode> graphList(String path, Map<String, String> parameters,
                                             String token)
             throws MetaApiException, IOException, InterruptedException {
         List<JsonNode> result = new ArrayList<>();
-        System.out.println("graph List");
         JsonNode response = graphGet(path, parameters, token);
         while (true) {
             JsonNode data = response.path("data");
@@ -677,7 +980,6 @@ public final class MetaOAuthService {
     private static JsonNode send(HttpRequest request)
             throws MetaApiException, IOException, InterruptedException {
         HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
-        System.out.println("send");
         JsonNode body;
         try {
             body = JSON.readTree(response.body());
@@ -685,8 +987,6 @@ public final class MetaOAuthService {
             throw new MetaApiException("Meta returned an unreadable response (HTTP "
                     + response.statusCode() + ").", exception);
         }
-        System.out.println("done2");
-        System.out.println(response + "\n" + body);
         if (response.statusCode() < 200 || response.statusCode() >= 300 || body.has("error")) {
             JsonNode error = body.path("error");
             StringBuilder detail = new StringBuilder();
@@ -703,10 +1003,10 @@ public final class MetaOAuthService {
             if (error.has("fbtrace_id")) {
                 detail.append(" | trace: ").append(error.path("fbtrace_id").asText());
             }
-            LOGGER.severe("Full Meta error response: " + body.toString()); // log raw JSON entirely
+            LOGGER.warning("Meta API request failed with HTTP " + response.statusCode()
+                    + " (Meta error " + error.path("code").asText("unknown") + ").");
             throw new MetaApiException(detail.toString(), error.path("code").asText(""));
         }
-        System.out.println("body done");
         return body;
     }
 

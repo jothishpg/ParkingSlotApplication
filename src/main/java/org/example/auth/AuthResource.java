@@ -534,6 +534,8 @@ public class AuthResource {
                 + "<input id=\"code\" name=\"code\" autocomplete=\"one-time-code\" "
                 + "required autofocus><br><br><button type=\"submit\">Verify and sign in</button>"
                 + "</form><p><a href=\"" + base(request)
+                + "/api/forgot-password/authenticator\">Lost authenticator and recovery codes?</a></p>"
+                + "<p><a href=\"" + base(request)
                 + "/login.html\">Cancel and return to login</a></p>";
         return Response.ok(simplePage("Two-factor verification", body))
                 .type(MediaType.TEXT_HTML)
