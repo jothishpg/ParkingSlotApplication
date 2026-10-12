@@ -35,10 +35,12 @@ import java.util.logging.Logger;
 
 public final class GmailEmailService {
     public static final String SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+    public static final String METADATA_SCOPE = "https://www.googleapis.com/auth/gmail.metadata";
 
     private static final Logger LOGGER = Logger.getLogger(GmailEmailService.class.getName());
     private static final ObjectMapper JSON = new ObjectMapper();
-    private static final HttpClient HTTP = HttpClient.newHttpClient();
+    private static final HttpClient HTTP = HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(10)).build();
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final String CLIENT_ID = setting("GOOGLE_CLIENT_ID");
     private static final String CLIENT_SECRET = setting("GOOGLE_CLIENT_SECRET");
@@ -65,7 +67,7 @@ public final class GmailEmailService {
                 + "?client_id=" + encode(CLIENT_ID)
                 + "&redirect_uri=" + encode(redirectUri)
                 + "&response_type=code"
-                + "&scope=" + encode("openid email " + SEND_SCOPE)
+                + "&scope=" + encode("openid email " + SEND_SCOPE + " " + METADATA_SCOPE)
                 + "&access_type=offline"
                 + "&prompt=" + encode("consent select_account")
                 + "&include_granted_scopes=true"
@@ -92,10 +94,13 @@ public final class GmailEmailService {
                 "grant_type", "authorization_code"));
         String accessToken = requiredText(tokenResponse, "access_token");
         String refreshToken = requiredText(tokenResponse, "refresh_token");
-        String scopes = tokenResponse.path("scope").asText("openid email " + SEND_SCOPE);
+        String scopes = tokenResponse.path("scope").asText("");
         if (!hasSendScope(scopes)) {
             throw new EmailSetupException(
                     "Google did not grant the Gmail send permission. Check the OAuth consent-screen scopes and authorize again.");
+        }
+        if (!java.util.Arrays.asList(scopes.split("\\s+")).contains(METADATA_SCOPE)) {
+            throw new EmailSetupException("Grant Gmail metadata permission to enable automatic no-reply responses, then reconnect.");
         }
 
         long expiresIn = tokenResponse.path("expires_in").asLong(0);
@@ -138,6 +143,9 @@ public final class GmailEmailService {
                  access_token_expires_at, granted_scopes, configured_by_user_id, created_at, updated_at)
             VALUES (1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             ON CONFLICT (config_id) DO UPDATE SET
+                auto_reply_started_at = CASE WHEN email_sender_config.sender_email = EXCLUDED.sender_email
+                    THEN email_sender_config.auto_reply_started_at ELSE CURRENT_TIMESTAMP END,
+                auto_reply_page_token = NULL,
                 sender_email = EXCLUDED.sender_email,
                 encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,
                 encrypted_access_token = EXCLUDED.encrypted_access_token,
@@ -285,6 +293,50 @@ public final class GmailEmailService {
 
     private record AccessCredentials(String senderEmail, String accessToken, String replyToEmail) { }
 
+    static String connectedSender() throws Exception { return currentAccessToken().senderEmail(); }
+
+
+    static JsonNode inboxMetadata(String expectedSender, String path) throws Exception {
+        AccessCredentials credentials = currentAccessToken();
+        if (!credentials.senderEmail().equalsIgnoreCase(expectedSender))
+            throw new EmailSetupException("Gmail sender changed while reading inbox metadata.");
+        HttpRequest request = HttpRequest.newBuilder(URI.create("https://gmail.googleapis.com/gmail/v1/users/me/" + path))
+                .timeout(java.time.Duration.ofSeconds(20))
+                .header("Authorization", "Bearer " + credentials.accessToken()).GET().build();
+        HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300)
+            throw new EmailSetupException("Gmail inbox request failed (HTTP " + response.statusCode() + "). Reconnect with metadata permission if access is denied.");
+        return JSON.readTree(response.body());
+    }
+
+    static void sendNoReplyNotice(String expectedSender, String recipient, String subject, String messageId) throws Exception {
+        AccessCredentials credentials = currentAccessToken();
+        if (!credentials.senderEmail().equalsIgnoreCase(expectedSender))
+            throw new EmailSetupException("Gmail sender changed while processing a reply.");
+        MimeMessage message = new MimeMessage(Session.getInstance(new Properties()));
+        message.setFrom(new InternetAddress(credentials.senderEmail(), true));
+        message.setRecipient(Message.RecipientType.TO, new InternetAddress(recipient, true));
+        message.setSubject(subject, StandardCharsets.UTF_8.name());
+        message.setText(GmailAutoReplyService.NOTICE, StandardCharsets.UTF_8.name());
+        message.setHeader("Auto-Submitted", "auto-replied");
+        message.setHeader("X-Auto-Response-Suppress", "All");
+        if (messageId != null) {
+            message.setHeader("In-Reply-To", messageId);
+            message.setHeader("References", messageId);
+        }
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        message.writeTo(bytes);
+        HttpRequest request = HttpRequest.newBuilder(URI.create(SEND_ENDPOINT))
+                .timeout(java.time.Duration.ofSeconds(20))
+                .header("Authorization", "Bearer " + credentials.accessToken())
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(java.util.Map.of(
+                        "raw", Base64.getUrlEncoder().withoutPadding().encodeToString(bytes.toByteArray()))))).build();
+        HttpResponse<String> response = HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() < 200 || response.statusCode() >= 300)
+            throw new EmailSetupException("Gmail automatic response failed (HTTP " + response.statusCode() + ").");
+    }
+
     private static void sendGmailMessage(
             String accessToken, String senderEmail, String toEmail, String subject, String body,
             String replyToEmail)
@@ -333,6 +385,7 @@ public final class GmailEmailService {
             throws IOException, InterruptedException, EmailSetupException {
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
+                .timeout(java.time.Duration.ofSeconds(20))
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(formBody))
                 .build();

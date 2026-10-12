@@ -1,12 +1,16 @@
 # Multi Parking System
 
+## Razorpay payments
+
+Checkout supports cash and native Razorpay Payment Links with merchant OAuth setup, a 15-minute window plus a request-transit allowance, signed webhooks and background reconciliation. Razorpay sends link SMS through the message queue. WhatsApp uses the existing booking template for links and pending/error updates, and the checkout template for successful payments. Apply migrations V5 through V8 in order, skipping versions already applied. See the [Razorpay setup guide](docs/razorpay-setup.md) and [payment messaging guide](docs/payment-messaging.md). This follows the existing one-business-per-database model.
+
 ## Gmail sender setup
 
 Forgot-password emails use the one global Gmail sender account connected by an administrator at `/api/admin/email-setup`. Any administrator may connect or replace the sender. The page displays the sender address and provides reconnect and disconnect actions. OAuth access and refresh tokens are encrypted before they are written to PostgreSQL; access tokens are refreshed and their encrypted value and expiry are updated when needed.
 
 ### Before deploying
 
-1. In the Google Cloud project used by the existing OAuth client, enable the **Gmail API** and configure `https://www.googleapis.com/auth/gmail.send` as an OAuth consent-screen scope.
+1. In the Google Cloud project used by the existing OAuth client, enable the **Gmail API** and configure `https://www.googleapis.com/auth/gmail.send` and `https://www.googleapis.com/auth/gmail.metadata` as OAuth consent-screen scopes. Metadata enables application-managed no-reply notices; `gmail.settings.basic` is not needed.
 2. Add the exact deployed callback URL to the OAuth client's authorized redirect URIs:
    `https://<your-public-host>/<your-app-context>/api/admin/email-setup/callback`
    Set `GMAIL_REDIRECT_URI` to that exact URL. Keep `GOOGLE_REDIRECT_URI` for the existing sign-in callback; the two redirect URIs are different.
@@ -20,7 +24,7 @@ Forgot-password emails use the one global Gmail sender account connected by an a
    ```
 
    Keep this key stable and backed up. Changing or losing it makes the saved Gmail tokens undecryptable; administrators will have to reconnect the account.
-5. Apply `database/migrations/V1__create_email_sender_config.sql` to the PostgreSQL database **before** deploying/starting this application version.
+5. Apply `database/migrations/V1__create_email_sender_config.sql` if not already applied, then run the manual schema SQL in [automatic Gmail replies](docs/gmail-auto-replies.md) before deployment. No auto-reply migration file is provided. Reconnect Gmail once to grant metadata access.
 6. If the OAuth consent screen is in Testing mode, add the authorizing administrator as a test user. Google testing-mode refresh tokens for non-basic scopes can expire after seven days. For ongoing production use, complete the consent-screen publishing and any Google verification requirements applicable to the project.
 7. Deploy the app over HTTPS, then sign in as an admin and use **Email Setup → Connect Gmail**. Select the desired sender account and grant access. The callback checks the granted send scope and verified Google account, then sends a one-time setup confirmation email to that account to verify Gmail API access. It replaces the stored sender only after those checks succeed.
 
@@ -40,7 +44,7 @@ Each customer database stores one Meta App and one selected Business Portfolio. 
 4. Optionally set `META_WHATSAPP_API_VERSION` (defaults to `v23.0`) and `APP_BASE_URL` in the deployment environment. Deploy over HTTPS.
 5. Sign in as an administrator, open **Facebook / WhatsApp Setup**, validate the customer's App ID and App Secret, then connect Facebook. The authorizing Facebook account must have the necessary access to the Business Portfolio and WhatsApp assets. Setup saves the portfolio, WABAs, phone numbers, system-user identities, permissions, assignments, and generated tokens only after the provisioning checks succeed.
 
-The admin system-user token receives only `business_management` and is kept for system-user/business administration; it is not used to send WhatsApp messages. Employee system-user tokens receive the WhatsApp permissions without `business_management` and are assigned to selected WABAs. Outgoing notifications select an active employee token at send time. The admin controls the Meta employee system users in Meta Business Settings; the application does not create a Meta system user for each local application employee. If no eligible employee token or phone number is configured, WhatsApp message delivery is unavailable. `MetaOAuthService.credentialsForPermission(...)` provides the eligible employee token for a required permission, including WhatsApp management for template operations.
+The admin system-user token receives only `business_management` and is kept for system-user/business administration; it is not used to send WhatsApp messages. Employee system-user tokens receive the WhatsApp permissions without `business_management` and are assigned to selected WABAs. Outgoing notifications load and decrypt an active employee token and its assigned phone number ID from PostgreSQL at send time; `META_WHATSAPP_ACCESS_TOKEN` and `META_WHATSAPP_PHONE_NUMBER_ID` are not used. The API version can still be configured with `META_WHATSAPP_API_VERSION`. The admin controls the Meta employee system users in Meta Business Settings; the application does not create a Meta system user for each local application employee. If no eligible employee token or phone number is configured, WhatsApp message delivery is unavailable. `MetaOAuthService.credentialsForPermission(...)` provides the eligible employee token for a required permission, including WhatsApp management for template operations.
 
 ### WhatsApp message templates
 

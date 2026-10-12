@@ -24,16 +24,11 @@ import java.util.logging.Logger;
 public final class WhatsAppNotificationService {
     private static final Logger LOGGER =
             Logger.getLogger(WhatsAppNotificationService.class.getName());
-    private static final HttpClient HTTP_CLIENT = HttpClient.newHttpClient();
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(10)).build();
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final String API_VERSION =
             setting("META_WHATSAPP_API_VERSION", "v23.0");
-    private static final String PHONE_NUMBER_ID =
-            setting("META_WHATSAPP_PHONE_NUMBER_ID", "");
-    private static final String ACCESS_TOKEN =
-            setting("META_WHATSAPP_ACCESS_TOKEN", "");
-    private static final String API_URL =
-            "https://graph.facebook.com/" + API_VERSION + "/" + PHONE_NUMBER_ID + "/messages";
 
     private WhatsAppNotificationService() {
     }
@@ -112,6 +107,57 @@ public final class WhatsAppNotificationService {
         sendTemplate(phoneNumber, "parking_booking_confirmed", parameters);
     }
 
+    /** Outbox success delivery uses the checkout assignment and the committed checkout amount. */
+    public static boolean sendPaymentCheckoutConfirmation(long bookingId, String recipient) throws SQLException {
+        String sql = "SELECT b.vehicle_number,s.slot_name,da.total_duration,da.amount FROM booking b "
+                + "JOIN slot s ON s.slot_id=b.slot_id JOIN duration_amount da ON da.booking_id=b.booking_id WHERE b.booking_id=?";
+        try (Connection c = DatabaseConnection.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
+            s.setLong(1, bookingId);
+            try (ResultSet r = s.executeQuery()) {
+                if (!r.next()) return false;
+                return sendAssignedTemplate(recipient, "CHECKOUT_CONFIRMATION", checkoutTemplateParameters(
+                        r.getString("vehicle_number"), r.getString("slot_name"),
+                        r.getBigDecimal("total_duration"), r.getBigDecimal("amount")));
+            }
+        }
+    }
+
+    public static Map<String,String> checkoutTemplateParameters(String vehicle, String slot,
+            java.math.BigDecimal duration, java.math.BigDecimal amount) {
+        Map<String,String> parameters = new LinkedHashMap<>();
+        parameters.put("driver_name", vehicle);
+        parameters.put("slot_name", slot);
+        parameters.put("total_duration", duration + " min");
+        parameters.put("amount", amount.toString());
+        return parameters;
+    }
+
+    /** Reuses the assigned booking template without changing its five-variable structure. */
+    public static boolean sendPaymentMessage(long bookingId, String recipient, String message) throws SQLException {
+        String sql = "SELECT b.vehicle_number,b.start_time,f.floor_name,s.slot_name FROM booking b "
+                + "JOIN slot s ON s.slot_id=b.slot_id JOIN floor f ON f.floor_id=s.floor_id WHERE b.booking_id=?";
+        try (Connection c = DatabaseConnection.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
+            s.setLong(1, bookingId);
+            try (ResultSet r = s.executeQuery()) {
+                if (!r.next()) return false;
+                return sendAssignedTemplate(recipient, "BOOKING_CONFIRMATION", paymentTemplateParameters(
+                        r.getString("vehicle_number"),r.getString("floor_name"),r.getString("slot_name"),
+                        r.getTimestamp("start_time").toString(),message));
+            }
+        }
+    }
+
+    public static Map<String,String> paymentTemplateParameters(String vehicle, String floor, String slot,
+                                                               String start, String message) {
+        Map<String,String> parameters = new LinkedHashMap<>();
+        parameters.put("driver_name",vehicle);
+        parameters.put("vehicle_number",vehicle);
+        parameters.put("floor_name",floor);
+        parameters.put("slot_name",slot);
+        parameters.put("start_time",start + " | " + message);
+        return parameters;
+    }
+
     public static void sendTemplate(
             String phoneNumber,
             String templateName,
@@ -119,7 +165,7 @@ public final class WhatsAppNotificationService {
         sendTemplate(phoneNumber, templateName, "en_US", parameters, null, false);
     }
 
-    private static void sendAssignedTemplate(String phoneNumber, String messageKey,
+    private static boolean sendAssignedTemplate(String phoneNumber, String messageKey,
                                              Map<String, String> parameters) {
         final WhatsAppTemplateAssignments.MessageType messageType;
         try {
@@ -127,12 +173,12 @@ public final class WhatsAppNotificationService {
         } catch (SQLException exception) {
             LOGGER.log(Level.WARNING, "Unable to read the WhatsApp template assignment for "
                     + messageKey + "; notification was not sent.", exception);
-            return;
+            return false;
         }
         if (messageType == null || messageType.templateId() == null) {
             LOGGER.info("WhatsApp notification skipped: no template is assigned to "
                     + messageKey + ".");
-            return;
+            return false;
         }
 
         try {
@@ -141,13 +187,13 @@ public final class WhatsAppNotificationService {
             if (!"APPROVED".equalsIgnoreCase(template.status())) {
                 LOGGER.warning("WhatsApp notification skipped: assigned template "
                         + template.name() + " is no longer approved.");
-                return;
+                return false;
             }
             if (!template.name().equals(messageType.templateName())
                     || !template.language().equals(messageType.languageCode())) {
                 LOGGER.warning("WhatsApp notification skipped: assigned template details changed. "
                         + "Review the " + messageKey + " assignment.");
-                return;
+                return false;
             }
             WhatsAppTemplateAssignments.Compatibility compatibility =
                     WhatsAppTemplateAssignments.compatibility(template.components(),
@@ -156,17 +202,17 @@ public final class WhatsAppNotificationService {
                 LOGGER.warning("WhatsApp notification skipped: assigned template "
                         + template.name() + " is no longer compatible: "
                         + compatibility.reason());
-                return;
+                return false;
             }
             if (parameters.size() != compatibility.bodyVariables().size()) {
                 LOGGER.warning("WhatsApp notification skipped: the application supplied "
                         + parameters.size() + " values for "
                         + compatibility.bodyVariables().size() + " template variables.");
-                return;
+                return false;
             }
             boolean named = "NAMED".equalsIgnoreCase(
                     template.details().path("parameter_format").asText("POSITIONAL"));
-            sendTemplate(phoneNumber, template.name(), template.language(), parameters,
+            return sendTemplate(phoneNumber, template.name(), template.language(), parameters,
                     compatibility.bodyVariables(), named);
         } catch (MetaOAuthService.MetaApiException | IOException | SQLException exception) {
             LOGGER.log(Level.WARNING, "Unable to validate assigned WhatsApp template for "
@@ -179,34 +225,17 @@ public final class WhatsAppNotificationService {
             LOGGER.log(Level.SEVERE, "Unexpected error validating assigned WhatsApp template for "
                     + messageKey + "; notification was not sent.", exception);
         }
+        return false;
     }
 
-    private static void sendTemplate(String phoneNumber, String templateName, String language,
+    private static boolean sendTemplate(String phoneNumber, String templateName, String language,
                                      Map<String, String> parameters, List<String> variableNames,
                                      boolean namedParameters) {
-        if (PHONE_NUMBER_ID.isBlank() || ACCESS_TOKEN.isBlank()) {
-            LOGGER.warning("WhatsApp notification failed: Meta credentials are not configured.");
-            return;
-        }
         String recipient = toWhatsAppNumber(phoneNumber);
         if (recipient == null) {
             LOGGER.warning("WhatsApp notification failed: recipient phone number is invalid.");
-            return;
+            return false;
         }
-//        MetaOAuthService.MessagingCredentials credentials;
-//        try {
-//            credentials = MetaOAuthService.messagingCredentials();
-//        } catch (SQLException | IOException exception) {
-//            LOGGER.log(Level.WARNING,
-//                    "WhatsApp notification failed: no usable employee system-user token is configured.",
-//                    exception);
-//            return;
-//        } catch (RuntimeException exception) {
-//            LOGGER.log(Level.SEVERE,
-//                    "WhatsApp notification failed while decrypting or loading Meta credentials.",
-//                    exception);
-//            return;
-//        }
 
         Map<String, Object> template = new LinkedHashMap<>();
         template.put("name", templateName);
@@ -244,24 +273,38 @@ public final class WhatsAppNotificationService {
             payloadJson = OBJECT_MAPPER.writeValueAsString(payload);
         } catch (JsonProcessingException exception) {
             LOGGER.log(Level.WARNING, "Unable to build WhatsApp notification payload.", exception);
-            return;
+            return false;
         }
-        LOGGER.fine("WhatsApp payload for template " + templateName + ": " + payloadJson);
+        LOGGER.fine("Preparing WhatsApp template " + templateName);
 
-//        String apiUrl = "https://graph.facebook.com/" + API_VERSION + "/"
-//                + credentials.phoneNumberId() + "/messages";
+        final MetaOAuthService.MessagingCredentials credentials;
+        try {
+            credentials = MetaOAuthService.messagingCredentials();
+        } catch (SQLException | IOException exception) {
+            LOGGER.log(Level.WARNING,
+                    "WhatsApp notification failed: no usable employee system-user token or "
+                            + "active phone number is configured.",
+                    exception);
+            return false;
+        } catch (RuntimeException exception) {
+            LOGGER.log(Level.SEVERE,
+                    "WhatsApp notification failed while decrypting or loading Meta credentials.",
+                    exception);
+            return false;
+        }
+        if (credentials.accessToken().isBlank() || credentials.phoneNumberId().isBlank()) {
+            LOGGER.warning("WhatsApp notification failed: database messaging credentials are incomplete.");
+            return false;
+        }
+        String apiUrl = "https://graph.facebook.com/" + API_VERSION + "/"
+                + credentials.phoneNumberId() + "/messages";
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(API_URL))
-                .header("Authorization", "Bearer " + ACCESS_TOKEN)
+                .uri(URI.create(apiUrl))
+                .timeout(java.time.Duration.ofSeconds(15))
+                .header("Authorization", "Bearer " + credentials.accessToken())
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(payloadJson, StandardCharsets.UTF_8))
                 .build();
-//        HttpRequest request = HttpRequest.newBuilder()
-//                .uri(URI.create(apiUrl))
-//                .header("Authorization", "Bearer " + credentials.accessToken())
-//                .header("Content-Type", "application/json")
-//                .POST(HttpRequest.BodyPublishers.ofString(payloadJson, StandardCharsets.UTF_8))
-//                .build();
         try {
             HttpResponse<String> response =
                     HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
@@ -269,6 +312,7 @@ public final class WhatsAppNotificationService {
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
                 LOGGER.info("WhatsApp notification sent successfully using template "
                         + templateName + " to " + recipient + ".");
+                return true;
             } else {
                 LOGGER.warning("WhatsApp notification failed. HTTP status "
                         + response.statusCode() + ": " + response.body());
@@ -280,6 +324,7 @@ public final class WhatsAppNotificationService {
             LOGGER.log(Level.WARNING, "WhatsApp notification failed because the API request was interrupted.",
                     exception);
         }
+        return false;
     }
 
     private static String toWhatsAppNumber(String value) {

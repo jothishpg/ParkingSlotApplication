@@ -238,8 +238,11 @@ public class EmailSetupResource {
                 : "<p>Status: Connected as <strong>" + escape(sender) + "</strong>.</p>")
                 + "<p><a href=\"" + escape(base) + "/api/admin/email-setup/authorize\">"
                 + (sender == null ? "Connect Gmail" : "Reconnect / change sender") + "</a></p>"
+                + "<p>Reconnect Gmail once to enable automatic no-reply responses. "
+                + "The application replies to new messages received in this connected mailbox while it is running.</p>"
                 + "<h3>Reply-To address</h3>"
-                + "<p>Optionally choose where recipients' replies should go. Leave blank to omit the Reply-To header.</p>"
+                + "<p>Optionally choose where recipients' replies should go. Leave blank to send replies to the connected mailbox. "
+                + "Automatic responses cannot handle replies delivered to a different mailbox.</p>"
                 + "<form method=\"post\" action=\"" + escape(base)
                 + "/api/admin/email-setup/reply-to\">"
                 + "<label for=\"replyToEmail\">Reply-To email</label> "

@@ -3,5 +3,9 @@
   <component name="SqlDialectMappings">
     <file url="file://$PROJECT_DIR$/database/migrations/V2__create_user_two_factor_auth.sql" dialect="GenericSQL" />
     <file url="file://$PROJECT_DIR$/database/migrations/V3__add_two_factor_recovery_purpose.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/database/migrations/V5__create_razorpay_payments.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/database/migrations/V6__remove_razorpay_webhook_secrets.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/database/migrations/V7__payment_customer_notifications.sql" dialect="GenericSQL" />
+    <file url="file://$PROJECT_DIR$/database/migrations/V8__payment_link_reconciliation.sql" dialect="GenericSQL" />
   </component>
 </project>

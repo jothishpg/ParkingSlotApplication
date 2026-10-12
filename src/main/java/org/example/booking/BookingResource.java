@@ -9,6 +9,10 @@ import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.SecurityContext;
 import org.example.config.DatabaseConnection;
 import org.example.notification.WhatsAppNotificationService;
+import org.example.payment.PaymentService;
+import org.example.payment.PaymentCrypto;
+import org.example.payment.PaymentMessaging;
+import org.example.admin.RazorpaySetupResource;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -22,7 +26,6 @@ import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -325,6 +328,7 @@ public class BookingResource {
                 int vehicleTypeId = result.getInt("vehicle_type_id");
                 long minutes = result.getLong("minutes");
                 BigDecimal amount = calculateAmount(connection, vehicleTypeId, minutes);
+                String csrf = PaymentCrypto.random();
 
                 String content = """
                         <h2>Check Out</h2>
@@ -337,13 +341,14 @@ public class BookingResource {
                         <p><strong>Duration (minutes):</strong> %d</p>
                         <p><strong>Amount:</strong> %s</p>
                         <form method="post" action="%s/api/booking/checkout/%d/pay">
+                            <input type="hidden" name="csrf" value="%s">
                             <label for="paymentMethod">Payment Method</label><br>
                             <select id="paymentMethod" name="paymentMethod" required>
                                 <option value="CASH">CASH</option>
-                                <option value="UPI">UPI</option>
-                                <option value="CARD">CARD</option>
-                                <option value="WALLET">WALLET</option>
+                                <option value="ONLINE">Online (Razorpay)</option>
                             </select><br><br>
+                            <p>Online payment links are sent automatically through SMS and WhatsApp.</p>
+                            <p>Payment links expire after about 15 minutes; the payment page shows the deadline. Payment status updates are sent through WhatsApp.</p>
                             <button type="submit">Pay</button>
                         </form>
                         <p><a href="%s/api/booking/checkout">Search Another Vehicle</a></p>
@@ -358,8 +363,13 @@ public class BookingResource {
                         amount,
                         base,
                         bookingId,
+                        csrf,
                         base);
-                return page(base, "Check Out", content);
+                return Response.fromResponse(page(base, "Check Out", content))
+                        .cookie(new jakarta.ws.rs.core.NewCookie.Builder("PARKING_CHECKOUT_CSRF")
+                                .value(csrf).path("/").secure(true).httpOnly(true)
+                                .sameSite(jakarta.ws.rs.core.NewCookie.SameSite.LAX).maxAge(1800).build())
+                        .header("Cache-Control", "no-store").build();
             }
         } catch (SQLException exception) {
             LOGGER.log(Level.SEVERE, "Unable to load checkout details.", exception);
@@ -374,10 +384,27 @@ public class BookingResource {
     public Response payCheckout(
             @PathParam("bookingId") long bookingId,
             @FormParam("paymentMethod") String paymentMethod,
+            @FormParam("csrf") String csrf,
+            @CookieParam("PARKING_CHECKOUT_CSRF") String csrfCookie,
             @Context SecurityContext securityContext,
             @Context HttpServletRequest request) {
         String base = base(request);
-        if (!Set.of("CASH", "UPI", "CARD", "WALLET").contains(paymentMethod)) {
+        try {
+            RazorpaySetupResource.csrf(csrf, csrfCookie);
+        } catch (IllegalArgumentException exception) {
+            return error(base, exception.getMessage());
+        }
+        if ("ONLINE".equals(paymentMethod)) {
+            try {
+                PaymentService.Checkout checkout = PaymentService.start(bookingId, currentUserId(securityContext));
+                return redirect(RazorpaySetupResource.base(request) + "/api/payments/razorpay/checkout/" + checkout.id());
+            } catch (Exception exception) {
+                LOGGER.log(Level.WARNING, "Unable to initiate Razorpay checkout: " + exception.getClass().getSimpleName());
+                return error(base, exception instanceof IllegalArgumentException || exception instanceof IllegalStateException
+                        ? exception.getMessage() : "Unable to initiate payment. Check payment status before collecting again.");
+            }
+        }
+        if (!"CASH".equals(paymentMethod)) {
             return error(base, "A valid payment method is required.");
         }
 
@@ -419,6 +446,17 @@ public class BookingResource {
                     }
                 }
 
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "SELECT 1 FROM payment_request WHERE booking_id=? AND status IN ('CREATING','PENDING','REVIEW')")) {
+                    statement.setLong(1, bookingId);
+                    try (ResultSet result = statement.executeQuery()) {
+                        if (result.next()) {
+                            connection.rollback();
+                            return error(base, Response.Status.CONFLICT,
+                                    "An online payment is unresolved. Check payment status or ask an admin to reconcile before collecting cash.");
+                        }
+                    }
+                }
                 long minutes;
                 try (PreparedStatement statement = connection.prepareStatement(
                         "SELECT CEIL(GREATEST(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - ?)) / 60, 1))::bigint AS minutes")) {
@@ -528,7 +566,7 @@ public class BookingResource {
                 """.formatted(base));
         String sql = """
                 SELECT b.vehicle_number, f.floor_name, s.slot_name,
-                       da.amount, p.payment_method, p.payment_status,
+                       da.amount, COALESCE(p.gateway_method, p.payment_method::text) AS payment_method, p.payment_status,
                        p.verified_by
                 FROM payment p
                 JOIN booking b ON b.booking_id = p.booking_id
@@ -667,7 +705,7 @@ public class BookingResource {
         return page(base, "Duration Details", content.toString());
     }
 
-    private BigDecimal calculateAmount(Connection connection, int vehicleTypeId, long totalMinutes)
+    public static BigDecimal calculateAmount(Connection connection, int vehicleTypeId, long totalMinutes)
             throws SQLException {
         List<RateTier> tiers = new ArrayList<>();
         String sql = """
@@ -744,7 +782,7 @@ public class BookingResource {
     }
 
     private static String setting(String environmentName) {
-        return System.getenv("");
+        return System.getenv(environmentName);
     }
 
     private Response page(String base, String title, String content) {
