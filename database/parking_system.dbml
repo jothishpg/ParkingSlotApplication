@@ -1,0 +1,577 @@
+// MultiParkingSystem PostgreSQL public schema
+// Generated from the connected parking_db database on 2026-10-13.
+// Partial indexes are documented below because DBML does not faithfully
+// express PostgreSQL predicates on indexes.
+
+Table booking {
+  booking_id bigint [pk, increment]
+  slot_id bigint [not null]
+  vehicle_number varchar(50) [not null]
+  start_time timestamp [not null]
+  phone_number varchar(10) [not null]
+}
+
+Table duration_amount {
+  booking_id bigint [pk, not null]
+  end_time timestamp
+  total_duration numeric
+  amount numeric
+}
+
+Table email_sender_config {
+  config_id smallint [pk, not null, note: 'CHECK (config_id = 1)']
+  sender_email varchar(320) [not null]
+  encrypted_refresh_token text [not null]
+  encrypted_access_token text
+  access_token_expires_at timestamptz
+  granted_scopes text [not null]
+  configured_by_user_id bigint
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  reply_to_email varchar(255)
+  auto_reply_started_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  auto_reply_page_token text
+}
+
+Table floor {
+  floor_id bigint [pk, increment]
+  floor_name varchar(50) [not null, unique]
+  status boolean [not null]
+  created_by bigint
+  vehicle_type_id int [not null]
+}
+
+Table floor_block {
+  block_id bigint [pk, increment]
+  user_id bigint [not null]
+  floor_id bigint [not null]
+  date_start timestamp [not null]
+  date_end timestamp
+  reason varchar(255)
+
+  indexes {
+    (floor_id, date_start, date_end) [name: 'idx_floor_block_lookup']
+  }
+
+  checks {
+    `date_end > date_start` [name: 'chk_floor_block_dates']
+  }
+}
+
+Table gmail_auto_reply {
+  sender_email text [not null]
+  gmail_message_id text [not null]
+  status text [not null]
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  submitted_at timestamptz
+  last_error text
+
+  indexes {
+    (sender_email, gmail_message_id) [pk]
+  }
+}
+
+Table google_oauth_config {
+  config_id smallint [pk, not null, note: 'CHECK (config_id = 1)']
+  client_id varchar(255) [not null]
+  encrypted_client_secret text [not null]
+  configured_by_user_id bigint
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+Table local_auth {
+  user_id bigint [pk, not null]
+  password varchar(255) [not null]
+}
+
+Table meta_app_config {
+  config_id smallint [pk, not null, note: 'CHECK (config_id = 1)']
+  app_id varchar(128) [not null, unique]
+  encrypted_app_secret text [not null]
+  credentials_validated_at timestamptz [not null]
+  business_id varchar(128) [unique]
+  business_name text
+  configured_by_user_id bigint
+  connected_at timestamptz
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  checks {
+    `business_id IS NOT NULL OR business_name IS NULL` [name: 'meta_business_details_check']
+  }
+}
+
+Table meta_phone_number {
+  phone_number_id varchar(128) [pk, not null]
+  waba_id varchar(128) [not null]
+  display_phone_number varchar(64)
+  verified_name text
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    waba_id [name: 'meta_phone_number_waba_idx']
+  }
+}
+
+Table meta_system_user {
+  system_user_id bigint [pk, increment, note: 'GENERATED ALWAYS AS IDENTITY']
+  meta_system_user_id varchar(128) [not null, unique]
+  system_user_name text
+  role varchar(16) [not null]
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  checks {
+    `role IN ('ADMIN', 'EMPLOYEE')`
+  }
+}
+
+Table meta_system_user_token {
+  token_id bigint [pk, increment, note: 'GENERATED ALWAYS AS IDENTITY']
+  system_user_id bigint [not null]
+  encrypted_access_token text [not null]
+  expires_at timestamptz
+  status varchar(16) [not null, default: 'ACTIVE']
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  checks {
+    `status IN ('ACTIVE', 'REVOKED', 'INVALID')`
+  }
+}
+
+Table meta_system_user_token_permission {
+  token_id bigint [not null]
+  permission varchar(128) [not null]
+
+  indexes {
+    (token_id, permission) [pk]
+  }
+}
+
+Table meta_system_user_waba_assignment {
+  system_user_id bigint [not null]
+  waba_id varchar(128) [not null]
+  meta_task varchar(64) [not null]
+  assigned_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (system_user_id, waba_id, meta_task) [pk]
+    waba_id [name: 'meta_waba_assignment_waba_idx']
+  }
+}
+
+Table meta_waba {
+  waba_id varchar(128) [pk, not null]
+  business_id varchar(128) [not null]
+  waba_name text
+  is_active boolean [not null, default: true]
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    business_id [name: 'meta_waba_business_idx']
+  }
+}
+
+Table oauth_auth {
+  user_id bigint [not null]
+  provider varchar(20) [not null]
+  provider_user_id varchar(255) [not null]
+
+  indexes {
+    (user_id, provider) [pk, name: 'pk_oauth_auth']
+    (provider, provider_user_id) [unique, name: 'uq_oauth_provider_user']
+  }
+}
+
+Table password_reset_requests {
+  request_id uuid [pk, not null, default: `gen_random_uuid()`]
+  user_id bigint [not null]
+  channel varchar(10) [not null]
+  destination varchar(255) [not null]
+  otp_hash varchar(64) [not null]
+  status varchar(10) [not null, default: 'PENDING']
+  created_at timestamptz [not null, default: `now()`]
+  expires_at timestamptz [not null]
+  attempt_count smallint [not null, default: 0]
+  max_attempts smallint [not null, default: 5]
+  resend_count smallint [not null, default: 0]
+  max_resends smallint [not null, default: 3]
+  last_sent_at timestamptz [not null, default: `now()`]
+  action_token_hash varchar(64)
+  action_token_expires_at timestamptz
+  verified_at timestamptz
+  used_at timestamptz
+  purpose varchar(24) [not null, default: 'PASSWORD_RESET']
+
+  indexes {
+    (user_id, created_at) [name: 'idx_prr_user_created']
+    action_token_hash [unique, name: 'uq_prr_action_token_hash']
+    expires_at [name: 'idx_prr_open_expiry']
+  }
+
+  checks {
+    `channel IN ('SMS', 'EMAIL')` [name: 'chk_prr_channel']
+    `attempt_count >= 0 AND attempt_count <= max_attempts AND resend_count >= 0 AND resend_count <= max_resends` [name: 'chk_prr_counters']
+    `(channel = 'SMS' AND destination ~ '^[0-9]{10}$') OR (channel = 'EMAIL' AND destination ~ '^[^@\\s]+@[^@\\s]+$')` [name: 'chk_prr_destination']
+    `expires_at > created_at` [name: 'chk_prr_expiry']
+    `purpose IN ('PASSWORD_RESET', 'TOTP_RECOVERY')` [name: 'chk_prr_purpose']
+    `status IN ('PENDING', 'VERIFIED', 'USED', 'EXPIRED', 'LOCKED', 'CANCELLED')` [name: 'chk_prr_status']
+    `(action_token_hash IS NULL) = (action_token_expires_at IS NULL)` [name: 'chk_prr_action_token_pair']
+    `(status = 'USED') = (used_at IS NOT NULL)` [name: 'chk_prr_used']
+    `(status NOT IN ('VERIFIED', 'USED')) OR (verified_at IS NOT NULL AND action_token_hash IS NOT NULL)` [name: 'chk_prr_verified']
+  }
+}
+
+Table payment {
+  payment_id bigint [pk, increment]
+  booking_id bigint [not null]
+  payment_method varchar(50)
+  verified_by bigint
+  payment_status varchar(20) [not null]
+  payment_request_id uuid
+  gateway_payment_id text
+  gateway_method text
+
+  indexes {
+    payment_request_id [unique, name: 'payment_request_success_unique']
+    gateway_payment_id [unique, name: 'payment_gateway_payment_unique']
+  }
+
+  checks {
+    `payment_method IN ('CASH', 'UPI', 'CARD', 'WALLET')`
+    `payment_status IN ('SUCCESS', 'FAILED', 'WAITING')`
+  }
+}
+
+Table payment_attempt {
+  gateway_payment_id text [pk, not null]
+  request_id uuid [not null]
+  provider_status text [not null]
+  provider_method text
+  amount_paise bigint [not null]
+  currency text [not null]
+  disposition varchar(20) [not null]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  checks {
+    `disposition IN ('PENDING', 'FAILED', 'COMPLETED', 'REVIEW')`
+  }
+}
+
+Table payment_message_outbox {
+  message_id bigint [pk, increment, note: 'GENERATED ALWAYS AS IDENTITY']
+  request_id uuid [not null]
+  event_key text [not null]
+  channel text [not null]
+  recipient text [not null]
+  message_text text [not null]
+  status text [not null, default: 'READY']
+  attempts int [not null, default: 0]
+  next_attempt_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  provider_message_id text
+  last_error text
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  submitted_at timestamptz
+
+  indexes {
+    (request_id, event_key, channel) [unique]
+    next_attempt_at [name: 'payment_message_dispatch']
+  }
+}
+
+Table payment_notification_outbox {
+  booking_id bigint [pk, not null]
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  attempted_at timestamptz
+}
+
+Table payment_request {
+  request_id uuid [pk, not null]
+  booking_id bigint [not null]
+  config_id bigint [not null]
+  initiated_by bigint [not null]
+  amount_paise bigint [not null]
+  currency varchar(3) [not null, default: 'INR']
+  pricing_cutoff timestamptz [not null]
+  duration_minutes bigint [not null]
+  expires_at timestamptz [not null]
+  gateway_order_id text [unique]
+  gateway_payment_link_id text [unique]
+  payment_link_url text
+  channel varchar(10) [not null, default: 'CHECKOUT']
+  status varchar(20) [not null, default: 'CREATING']
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  customer_phone text
+  sms_consent boolean [not null, default: false]
+  whatsapp_consent boolean [not null, default: false]
+  consent_recorded_at timestamptz
+  consent_recorded_by bigint
+  customer_token_hash text [unique]
+  next_reconcile_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  reconcile_errors int [not null, default: 0]
+
+  indexes {
+    booking_id [name: 'payment_request_booking']
+  }
+
+  checks {
+    `channel IN ('CHECKOUT', 'WHATSAPP', 'SMS', 'EMAIL')`
+    `currency = 'INR'`
+    `duration_minutes >= 1`
+    `status IN ('CREATING', 'PENDING', 'EXPIRED', 'PAID', 'REVIEW')`
+  }
+}
+
+Table payment_webhook_event {
+  config_id bigint [not null]
+  event_id text [not null]
+  event_type text [not null]
+  processed_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (config_id, event_id) [pk]
+  }
+}
+
+Table razorpay_config {
+  config_id bigint [pk, increment, note: 'GENERATED ALWAYS AS IDENTITY']
+  auth_type varchar(10) [not null]
+  mode varchar(4) [not null]
+  account_id text
+  public_key text [not null]
+  encrypted_secret text [not null]
+  encrypted_refresh_token text
+  access_expires_at timestamptz
+  encrypted_signature_secret text [not null]
+  active boolean [not null, default: true]
+  configured_by bigint [not null]
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  checks {
+    `auth_type IN ('OAUTH', 'KEYS')`
+    `mode IN ('test', 'live')`
+  }
+}
+
+Table razorpay_oauth_state {
+  state_hash text [pk, not null]
+  admin_id bigint [not null]
+  mode varchar(4) [not null]
+  expires_at timestamptz [not null, default: `CURRENT_TIMESTAMP + INTERVAL '10 minutes'`]
+
+  checks {
+    `mode IN ('test', 'live')`
+  }
+}
+
+Table roles {
+  role_id bigint [pk, increment, note: 'GENERATED ALWAYS AS IDENTITY']
+  role_name varchar(50) [not null, unique]
+}
+
+Table slot {
+  slot_id bigint [pk, increment]
+  slot_name varchar(2) [not null]
+  state varchar(20) [not null]
+  floor_id bigint [not null]
+  created_by bigint
+
+  indexes {
+    (floor_id, slot_name) [unique, name: 'uq_floor_slot_name']
+  }
+
+  checks {
+    `state IN ('AVAILABLE', 'OCCUPIED', 'BLOCKED')`
+  }
+}
+
+Table slot_block {
+  block_id bigint [pk, increment]
+  user_id bigint [not null]
+  slot_id bigint [not null]
+  date_start timestamp [not null]
+  date_end timestamp
+  reason varchar(255)
+
+  indexes {
+    (slot_id, date_start, date_end) [name: 'idx_slot_block_lookup']
+  }
+
+  checks {
+    `date_end > date_start` [name: 'chk_slot_block_dates']
+  }
+}
+
+Table two_factor_login_challenges {
+  challenge_id uuid [pk, not null]
+  user_id bigint [not null]
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  expires_at timestamptz [not null]
+  attempts int [not null, default: 0]
+  consumed_at timestamptz
+
+  indexes {
+    user_id [unique, name: 'two_factor_login_challenges_user_idx']
+    expires_at [name: 'two_factor_login_challenges_expiry_idx']
+  }
+
+  checks {
+    `attempts BETWEEN 0 AND 5` [name: 'two_factor_login_attempts_check']
+    `expires_at > created_at` [name: 'two_factor_login_expiry_check']
+  }
+}
+
+Table user_two_factor {
+  user_id bigint [pk, not null]
+  secret_ciphertext text
+  pending_secret_ciphertext text
+  pending_secret_expires_at timestamptz
+  last_totp_counter bigint [not null, default: -1]
+  failed_login_attempts int [not null, default: 0]
+  login_locked_until timestamptz
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  checks {
+    `last_totp_counter >= -1` [name: 'user_two_factor_counter_check']
+    `failed_login_attempts >= 0` [name: 'user_two_factor_failed_attempts_check']
+    `(pending_secret_ciphertext IS NULL) = (pending_secret_expires_at IS NULL)` [name: 'user_two_factor_pending_expiry_check']
+  }
+}
+
+Table user_two_factor_recovery_codes {
+  user_id bigint [not null]
+  code_hash varchar(64) [not null]
+  used_at timestamptz
+
+  indexes {
+    (user_id, code_hash) [pk]
+  }
+
+  checks {
+    `code_hash ~ '^[0-9a-f]{64}$'` [name: 'user_two_factor_recovery_hash_check']
+  }
+}
+
+Table users {
+  user_id bigint [pk, increment, note: 'GENERATED ALWAYS AS IDENTITY']
+  email varchar(255) [not null, unique]
+  name varchar(100) [not null]
+  phone_number varchar(20) [not null]
+  role_id bigint [not null]
+  profile_completed boolean [not null, default: true]
+}
+
+Table vehicle_details {
+  vehicle_number varchar(50) [not null]
+  color varchar(50)
+  phone_number varchar(10) [not null]
+
+  indexes {
+    (phone_number, vehicle_number) [pk]
+  }
+}
+
+Table vehicle_rate {
+  rate_id bigint [pk, increment, note: 'GENERATED ALWAYS AS IDENTITY']
+  vehicle_type_id int [not null]
+  duration_limit int [not null]
+  rate_per_minute numeric(10,2) [not null]
+
+  indexes {
+    (vehicle_type_id, duration_limit) [unique, name: 'uq_vehicle_rate_vehicle_duration']
+  }
+}
+
+Table vehicle_type {
+  vehicle_type_id int [pk, increment]
+  type_name varchar(20) [not null, unique]
+}
+
+Table whatsapp_message_template_assignment {
+  message_key varchar(40) [pk, not null]
+  meta_template_id varchar(128) [not null]
+  template_name varchar(512) [not null]
+  language_code varchar(20) [not null]
+  assigned_by_user_id bigint
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+Table whatsapp_message_type {
+  message_key varchar(40) [pk, not null]
+  display_name varchar(80) [not null]
+  required_body_variable_count smallint [not null]
+  admin_assignable boolean [not null, default: true]
+
+  checks {
+    `message_key IN ('OTP', 'BOOKING_CONFIRMATION', 'CHECKOUT_CONFIRMATION')`
+    `required_body_variable_count >= 0`
+  }
+}
+
+// Foreign keys. Default PostgreSQL delete behavior is NO ACTION unless specified.
+Ref: booking.slot_id > slot.slot_id
+Ref: booking.(phone_number, vehicle_number) > vehicle_details.(phone_number, vehicle_number)
+Ref: duration_amount.booking_id - booking.booking_id
+Ref: email_sender_config.configured_by_user_id > users.user_id [delete: set null]
+Ref: floor.created_by > users.user_id
+Ref: floor.vehicle_type_id > vehicle_type.vehicle_type_id
+Ref: floor_block.user_id > users.user_id
+Ref: floor_block.floor_id > floor.floor_id
+Ref: google_oauth_config.configured_by_user_id > users.user_id [delete: set null]
+Ref: local_auth.user_id - users.user_id [delete: cascade]
+Ref: meta_app_config.configured_by_user_id > users.user_id [delete: set null]
+Ref: meta_phone_number.waba_id > meta_waba.waba_id [delete: cascade]
+Ref: meta_system_user_token.system_user_id > meta_system_user.system_user_id [delete: cascade]
+Ref: meta_system_user_token_permission.token_id > meta_system_user_token.token_id [delete: cascade]
+Ref: meta_system_user_waba_assignment.system_user_id > meta_system_user.system_user_id [delete: cascade]
+Ref: meta_system_user_waba_assignment.waba_id > meta_waba.waba_id [delete: cascade]
+Ref: meta_waba.business_id > meta_app_config.business_id [delete: cascade]
+Ref: oauth_auth.user_id > users.user_id [delete: cascade]
+Ref: password_reset_requests.user_id > users.user_id [delete: cascade]
+Ref: payment.booking_id > booking.booking_id
+Ref: payment.verified_by > users.user_id
+Ref: payment.payment_request_id > payment_request.request_id
+Ref: payment_attempt.request_id > payment_request.request_id
+Ref: payment_message_outbox.request_id > payment_request.request_id
+Ref: payment_notification_outbox.booking_id - booking.booking_id
+Ref: payment_request.booking_id > booking.booking_id
+Ref: payment_request.config_id > razorpay_config.config_id
+Ref: payment_request.initiated_by > users.user_id
+Ref: payment_request.consent_recorded_by > users.user_id
+Ref: payment_webhook_event.config_id > razorpay_config.config_id
+Ref: razorpay_config.configured_by > users.user_id
+Ref: razorpay_oauth_state.admin_id > users.user_id
+Ref: slot.floor_id > floor.floor_id
+Ref: slot.created_by > users.user_id
+Ref: slot_block.user_id > users.user_id
+Ref: slot_block.slot_id > slot.slot_id
+Ref: two_factor_login_challenges.user_id > users.user_id [delete: cascade]
+Ref: user_two_factor.user_id - users.user_id [delete: cascade]
+Ref: user_two_factor_recovery_codes.user_id > users.user_id [delete: cascade]
+Ref: users.role_id > roles.role_id
+Ref: vehicle_rate.vehicle_type_id > vehicle_type.vehicle_type_id
+Ref: whatsapp_message_template_assignment.message_key - whatsapp_message_type.message_key [delete: cascade]
+Ref: whatsapp_message_template_assignment.assigned_by_user_id > users.user_id [delete: set null]
+
+// Partial PostgreSQL indexes present in the inspected database:
+// - meta_system_user: UNIQUE(role) WHERE role='ADMIN' AND is_active=true
+// - meta_system_user_token: UNIQUE(system_user_id) WHERE status='ACTIVE'
+// - password_reset_requests: UNIQUE(user_id) WHERE status IN ('PENDING','VERIFIED')
+// - payment: UNIQUE(gateway_payment_id) WHERE gateway_payment_id IS NOT NULL
+// - payment: UNIQUE(payment_request_id) WHERE payment_request_id IS NOT NULL
+// - payment_request: UNIQUE(booking_id) WHERE status IN ('CREATING','PENDING')
+// - payment_message_outbox: INDEX(next_attempt_at) WHERE status IN ('READY','PROCESSING')
+// - razorpay_config: UNIQUE(active) WHERE active
+// - password_reset_requests: INDEX(expires_at) WHERE status IN ('PENDING','VERIFIED')
+//
+// Schema drift to be aware of: the live database has the partial unique index
+// uq_prr_one_open_per_user on password_reset_requests(user_id), while the
+// repository's V10 migration defines password_reset_open_user_purpose_idx on
+// (user_id, purpose). The diagram above describes the live database, not the
+// post-V10 intended index.

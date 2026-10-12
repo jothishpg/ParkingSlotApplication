@@ -48,11 +48,10 @@ public final class MetaOAuthService {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newHttpClient();
-    private static final String API_VERSION = setting("META_WHATSAPP_API_VERSION", "v23.0");
+    public static final String API_VERSION = setting("META_WHATSAPP_API_VERSION", "v23.0");
     private static final String GRAPH_BASE = "https://graph.facebook.com/" + API_VERSION;
     private static final String GRAPH_HOST = "graph.facebook.com";
     private static final Logger LOGGER = Logger.getLogger(MetaOAuthService.class.getName());
-    ;
 
     private MetaOAuthService() {
     }

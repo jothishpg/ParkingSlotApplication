@@ -8,9 +8,9 @@ Apply database migrations V7__payment_customer_notifications.sql and V8__payment
 
 New online checkouts automatically enable SMS links and WhatsApp links/status messages. There are no consent checkboxes. The customer phone snapshot and notification settings are stored with the request. For compatibility, the existing sms_consent and whatsapp_consent columns act as channel settings; new automatic requests do not record fictitious consent timestamps or consent administrators. Existing requests retain their original settings. Repeated Pay clicks reuse the existing request and link. This change needs no additional database migration.
 
-The server freezes the charge/duration, creates a native link with partial payments disabled, and saves Razorpay's returned deadline. The request UUID is the unique reference_id. Creation uses POST /v1/payment_links. Creation disables automatic notifications so the link is saved before the message worker requests SMS through POST /v1/payment_links/{id}/notify_by/sms. WhatsApp uses the same native short_url. Treat payment links as confidential. Older application-hosted links remain supported for existing requests.
+The server freezes the charge/duration and creates a native link with partial payments disabled. The request UUID is the unique reference_id. Creation uses POST /v1/payment_links with Razorpay SMS notification enabled, so Razorpay sends its built-in SMS to the saved customer contact as the link is created. The returned provider deadline is saved. WhatsApp uses the same native short_url through the message worker. Provider-confirmed failed payment attempts can resend the still-valid link through POST /v1/payment_links/{id}/notify_by/sms. Treat payment links as confidential. Older application-hosted links remain supported for existing requests.
 
-Razorpay's notification API sends payment-link SMS; it is not a general sender for our custom success/failure/error text. Those updates use WhatsApp. Provider account/test-mode capabilities govern actual SMS delivery. Razorpay's documentation currently limits test mode to 30 native links per business.
+Razorpay's built-in notification sends payment-link SMS; it is not a general sender for our custom success/failure/error text. Those updates use WhatsApp. The outbox does not send a second initial SMS after creation. Provider account/test-mode capabilities govern actual SMS delivery. Razorpay's documentation currently limits test mode to 30 native links per business.
 
 ## Payment status and recovery
 
@@ -30,7 +30,7 @@ Payment links and unsuccessful/pending status messages use the existing BOOKING_
 
 ## Payment-link fields and provider receipts
 
-API-created links use the calculated amount in integer paise, INR, a parking-booking description, the saved customer phone and a unique request UUID reference. Email is omitted and email notification is disabled. Reminders and partial payments are disabled; optional notes are omitted. SMS is submitted through the outbox only after the link is saved, rather than enabled in the creation request, so retries and resends stay tracked.
+API-created links use the calculated amount in integer paise, INR, a parking-booking description, the saved customer phone and a unique request UUID reference. Email is omitted and email notification is disabled. Reminders and partial payments are disabled; optional notes are omitted. Razorpay SMS is enabled on link creation; WhatsApp delivery is queued after the link is saved.
 
 Razorpay receipts are separate from the application's checkout notification. No undocumented receipt option is sent to the standard Payment Links API. A receipt setting enabled while creating a dashboard link must not be assumed to apply to all API-created links; confirm its merchant-wide scope and test a receipt for an API-created link. Without an email address, email receipt delivery is unavailable; provider WhatsApp receipts depend on the merchant's enabled receipt feature. The application still sends its own checkout WhatsApp confirmation after verified successful payment.
 

@@ -26,8 +26,12 @@ class PaymentMessagingTest {
             assertFalse(expired.contains(link));assertTrue(expired.contains("fresh link"));
         }
         assertTrue(PaymentMessaging.smsLinkEvent("FAILED:pay_123"));
+        assertFalse(PaymentMessaging.smsLinkEvent("LINK"));
         assertFalse(PaymentMessaging.smsLinkEvent("SERVER_ERROR"));
         assertFalse(PaymentMessaging.smsLinkEvent("CLIENT_ERROR"));
+    }
+    @Test void razorpaySendsTheInitialPaymentLinkBySmsWithoutEmail() {
+        assertEquals(Map.of("sms",true,"email",false),PaymentService.paymentLinkNotifications());
     }
     @Test void uncertainErrorsNeverOfferAPaymentRetry() {
         for(String event : new String[]{"CLIENT_ERROR","SERVER_ERROR"}) {

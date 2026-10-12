@@ -59,14 +59,7 @@ public class EmailSetupResource {
             claims.put("admin_user_id", adminId);
             String state = JwtUtil.generate(claims, STATE_TTL_SECONDS);
             String authorizationUrl = GmailEmailService.authorizationUrl(redirectUri, state);
-            NewCookie stateCookie = new NewCookie.Builder(STATE_COOKIE)
-                    .value(state)
-                    .path("/")
-                    .httpOnly(true)
-                    .secure(true)
-                    .sameSite(NewCookie.SameSite.LAX)
-                    .maxAge((int) STATE_TTL_SECONDS)
-                    .build();
+            NewCookie stateCookie = stateCookie(state, (int) STATE_TTL_SECONDS);
             return Response.seeOther(URI.create(authorizationUrl))
                     .cookie(stateCookie)
                     .build();
@@ -371,13 +364,17 @@ public class EmailSetupResource {
     }
 
     private NewCookie clearStateCookie() {
+        return stateCookie("", 0);
+    }
+
+    private NewCookie stateCookie(String value, int maxAge) {
         return new NewCookie.Builder(STATE_COOKIE)
-                .value("")
+                .value(value)
                 .path("/")
                 .httpOnly(true)
                 .secure(true)
                 .sameSite(NewCookie.SameSite.LAX)
-                .maxAge(0)
+                .maxAge(maxAge)
                 .build();
     }
 

@@ -10,7 +10,6 @@ import jakarta.ws.rs.core.SecurityContext;
 import org.example.config.DatabaseConnection;
 import org.example.notification.WhatsAppNotificationService;
 import org.example.payment.PaymentService;
-import org.example.payment.PaymentCrypto;
 import org.example.payment.PaymentMessaging;
 import org.example.admin.RazorpaySetupResource;
 
@@ -328,7 +327,6 @@ public class BookingResource {
                 int vehicleTypeId = result.getInt("vehicle_type_id");
                 long minutes = result.getLong("minutes");
                 BigDecimal amount = calculateAmount(connection, vehicleTypeId, minutes);
-                String csrf = PaymentCrypto.random();
 
                 String content = """
                         <h2>Check Out</h2>
@@ -341,7 +339,6 @@ public class BookingResource {
                         <p><strong>Duration (minutes):</strong> %d</p>
                         <p><strong>Amount:</strong> %s</p>
                         <form method="post" action="%s/api/booking/checkout/%d/pay">
-                            <input type="hidden" name="csrf" value="%s">
                             <label for="paymentMethod">Payment Method</label><br>
                             <select id="paymentMethod" name="paymentMethod" required>
                                 <option value="CASH">CASH</option>
@@ -363,12 +360,8 @@ public class BookingResource {
                         amount,
                         base,
                         bookingId,
-                        csrf,
                         base);
                 return Response.fromResponse(page(base, "Check Out", content))
-                        .cookie(new jakarta.ws.rs.core.NewCookie.Builder("PARKING_CHECKOUT_CSRF")
-                                .value(csrf).path("/").secure(true).httpOnly(true)
-                                .sameSite(jakarta.ws.rs.core.NewCookie.SameSite.LAX).maxAge(1800).build())
                         .header("Cache-Control", "no-store").build();
             }
         } catch (SQLException exception) {
@@ -384,16 +377,9 @@ public class BookingResource {
     public Response payCheckout(
             @PathParam("bookingId") long bookingId,
             @FormParam("paymentMethod") String paymentMethod,
-            @FormParam("csrf") String csrf,
-            @CookieParam("PARKING_CHECKOUT_CSRF") String csrfCookie,
             @Context SecurityContext securityContext,
             @Context HttpServletRequest request) {
         String base = base(request);
-        try {
-            RazorpaySetupResource.csrf(csrf, csrfCookie);
-        } catch (IllegalArgumentException exception) {
-            return error(base, exception.getMessage());
-        }
         if ("ONLINE".equals(paymentMethod)) {
             try {
                 PaymentService.Checkout checkout = PaymentService.start(bookingId, currentUserId(securityContext));

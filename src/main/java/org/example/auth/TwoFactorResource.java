@@ -24,8 +24,6 @@ import java.io.IOException;
 import java.net.URI;
 import java.security.GeneralSecurityException;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Base64;
 import java.util.List;
@@ -56,8 +54,6 @@ public class TwoFactorResource {
                     + "<input id=\"code\" name=\"code\" required><br><br>"
                     + "<button type=\"submit\">Replace recovery codes</button></form>"
                     + "<form method=\"post\" action=\"" + base + "/api/auth/totp/disable\">"
-                    + "<label for=\"password\">Current password (for password accounts)</label><br>"
-                    + "<input type=\"password\" id=\"password\" name=\"password\"><br>"
                     + "<label for=\"disableCode\">Current authenticator or recovery code</label><br>"
                     + "<input id=\"disableCode\" name=\"code\" required><br><br>"
                     + "<button type=\"submit\">Disable two-factor authentication</button></form>"
@@ -173,7 +169,6 @@ public class TwoFactorResource {
     @Path("disable")
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     public Response disable(
-            @FormParam("password") String password,
             @FormParam("code") String code,
             @CookieParam(AUTH_COOKIE) String authToken,
             @Context HttpServletRequest request) {
@@ -184,12 +179,6 @@ public class TwoFactorResource {
         long userId = ((Number) claims.get("user_id")).longValue();
         try (Connection connection = DatabaseConnection.getConnection()) {
             connection.setAutoCommit(false);
-            String passwordHash = localPasswordHash(connection, userId);
-            if (passwordHash != null && !passwordMatches(password, passwordHash)) {
-                connection.rollback();
-                return page(Response.Status.UNAUTHORIZED, "Disable two-factor authentication",
-                        "<p>Current password is incorrect.</p>");
-            }
             if (!TwoFactorService.consumeFactor(connection, userId, code)) {
                 connection.rollback();
                 return page(Response.Status.UNAUTHORIZED, "Disable two-factor authentication",
@@ -203,28 +192,6 @@ public class TwoFactorResource {
         } catch (SQLException | GeneralSecurityException exception) {
             return page(Response.Status.INTERNAL_SERVER_ERROR, "Disable two-factor authentication",
                     "<p>Unable to disable two-factor authentication.</p>");
-        }
-    }
-
-    private String localPasswordHash(Connection connection, long userId) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement(
-                "SELECT password FROM local_auth WHERE user_id = ?")) {
-            statement.setLong(1, userId);
-            try (ResultSet result = statement.executeQuery()) {
-                if (!result.next()) {
-                    return null;
-                }
-                String passwordHash = result.getString(1);
-                return passwordHash == null ? "" : passwordHash;
-            }
-        }
-    }
-
-    private boolean passwordMatches(String password, String hash) {
-        try {
-            return password != null && PasswordHasher.matches(password, hash);
-        } catch (IllegalArgumentException exception) {
-            return false;
         }
     }
 

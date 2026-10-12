@@ -27,8 +27,6 @@ public final class WhatsAppNotificationService {
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(java.time.Duration.ofSeconds(10)).build();
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final String API_VERSION =
-            setting("META_WHATSAPP_API_VERSION", "v23.0");
 
     private WhatsAppNotificationService() {
     }
@@ -296,7 +294,7 @@ public final class WhatsAppNotificationService {
             LOGGER.warning("WhatsApp notification failed: database messaging credentials are incomplete.");
             return false;
         }
-        String apiUrl = "https://graph.facebook.com/" + API_VERSION + "/"
+        String apiUrl = "https://graph.facebook.com/" + MetaOAuthService.API_VERSION + "/"
                 + credentials.phoneNumberId() + "/messages";
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(apiUrl))
@@ -332,11 +330,6 @@ public final class WhatsAppNotificationService {
             return null;
         }
         return "+91" + value.trim();
-    }
-
-    private static String setting(String environmentName, String defaultValue) {
-        String value = System.getenv(environmentName);
-        return value == null || value.isBlank() ? defaultValue : value.trim();
     }
 
     private static void requestPrint(HttpRequest request){
