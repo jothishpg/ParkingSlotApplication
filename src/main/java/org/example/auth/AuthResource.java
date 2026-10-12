@@ -20,6 +20,7 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.NewCookie;
 import jakarta.ws.rs.core.Response;
 import org.example.config.DatabaseConnection;
+import org.example.notification.GoogleOAuthConfig;
 
 import java.io.IOException;
 import java.net.URI;
@@ -49,10 +50,6 @@ public class AuthResource {
     private static final GsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    private static final String GOOGLE_CLIENT_ID =
-            setting("GOOGLE_CLIENT_ID");
-    private static final String GOOGLE_CLIENT_SECRET =
-            setting("GOOGLE_CLIENT_SECRET");
     private static final String GOOGLE_REDIRECT_URI =
             setting("GOOGLE_REDIRECT_URI");
     private static final String APP_BASE_URL =
@@ -204,11 +201,21 @@ public class AuthResource {
             @QueryParam("mode") String mode,
             @Context HttpServletRequest request) {
 
-        if (!googleConfigured()) {
+        GoogleOAuthConfig.Client googleClient;
+        try {
+            googleClient = GoogleOAuthConfig.load();
+        } catch (SQLException | IllegalStateException exception) {
+            LOGGER.log(Level.WARNING, "Unable to load the Google OAuth configuration.", exception);
             return htmlError(
-                    Response.Status.INTERNAL_SERVER_ERROR,
-                    "Google server configuration is incomplete.", request
+                    Response.Status.SERVICE_UNAVAILABLE,
+                    "Google sign-in is unavailable. Ask an administrator to configure Google OAuth in Email Setup.",
+                    request
             );
+        }
+        if (googleClient == null) {
+            return htmlError(Response.Status.SERVICE_UNAVAILABLE,
+                    "Google sign-in is unavailable. Ask an administrator to configure Google OAuth in Email Setup.",
+                    request);
         }
 
         String googleMode = "signup".equalsIgnoreCase(mode) ? "signup" : "login";
@@ -219,7 +226,7 @@ public class AuthResource {
 
         String url =
                 "https://accounts.google.com/o/oauth2/v2/auth"
-                        + "?client_id=" + encode(GOOGLE_CLIENT_ID)
+                        + "?client_id=" + encode(googleClient.clientId())
                         + "&redirect_uri=" + encode(googleRedirectUri(request))
                         + "&response_type=code"
                         + "&scope=" + encode("openid email profile")
@@ -254,11 +261,21 @@ public class AuthResource {
             );
         }
 
-        if (!googleConfigured()) {
+        GoogleOAuthConfig.Client googleClient;
+        try {
+            googleClient = GoogleOAuthConfig.load();
+        } catch (SQLException | IllegalStateException exception) {
+            LOGGER.log(Level.WARNING, "Unable to load the Google OAuth configuration.", exception);
             return htmlError(
-                    Response.Status.INTERNAL_SERVER_ERROR,
-                    "Google server configuration is incomplete.", request
+                    Response.Status.SERVICE_UNAVAILABLE,
+                    "Google sign-in is unavailable. Ask an administrator to configure Google OAuth in Email Setup.",
+                    request
             );
+        }
+        if (googleClient == null) {
+            return htmlError(Response.Status.SERVICE_UNAVAILABLE,
+                    "Google sign-in is unavailable. Ask an administrator to configure Google OAuth in Email Setup.",
+                    request);
         }
 
         try {
@@ -266,14 +283,14 @@ public class AuthResource {
                     new GoogleAuthorizationCodeTokenRequest(
                             HTTP_TRANSPORT,
                             JSON_FACTORY,
-                            GOOGLE_CLIENT_ID,
-                            GOOGLE_CLIENT_SECRET,
+                            googleClient.clientId(),
+                            googleClient.clientSecret(),
                             code,
                             googleRedirectUri(request)
                     ).execute();
 
             GoogleIdToken token =
-                    googleVerifier().verify(tokenResponse.getIdToken());
+                    googleVerifier(googleClient.clientId()).verify(tokenResponse.getIdToken());
 
             if (token == null) {
                 return htmlError(
@@ -979,11 +996,6 @@ public class AuthResource {
         return value == null || value.isBlank();
     }
 
-    private boolean googleConfigured() {
-        return !blank(GOOGLE_CLIENT_ID)
-                && !blank(GOOGLE_CLIENT_SECRET);
-    }
-
     private String googleRedirectUri(HttpServletRequest request) {
         if (!blank(GOOGLE_REDIRECT_URI)) {
             return GOOGLE_REDIRECT_URI;
@@ -1009,14 +1021,14 @@ public class AuthResource {
         return environmentValue == null ? null : environmentValue;
     }
 
-    private GoogleIdTokenVerifier googleVerifier() {
+    private GoogleIdTokenVerifier googleVerifier(String clientId) {
 
         return new GoogleIdTokenVerifier.Builder(
                 HTTP_TRANSPORT,
                 JSON_FACTORY
         )
                 .setAudience(
-                        Collections.singletonList(GOOGLE_CLIENT_ID)
+                        Collections.singletonList(clientId)
                 )
                 .build();
     }

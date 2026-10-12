@@ -10,12 +10,13 @@ Forgot-password emails use the one global Gmail sender account connected by an a
 
 ### Before deploying
 
-1. In the Google Cloud project used by the existing OAuth client, enable the **Gmail API** and configure `https://www.googleapis.com/auth/gmail.send` and `https://www.googleapis.com/auth/gmail.metadata` as OAuth consent-screen scopes. Metadata enables application-managed no-reply notices; `gmail.settings.basic` is not needed.
-2. Add the exact deployed callback URL to the OAuth client's authorized redirect URIs:
+1. Apply `database/migrations/V9__create_google_oauth_config.sql` to each customer database.
+2. In the customer's Google Cloud project, enable the **Gmail API** and configure `https://www.googleapis.com/auth/gmail.send` and `https://www.googleapis.com/auth/gmail.metadata` as OAuth consent-screen scopes. Metadata enables application-managed no-reply notices; `gmail.settings.basic` is not needed.
+3. Add both exact deployed callback URLs to the OAuth client's authorized redirect URIs:
+   `https://<your-public-host>/<your-app-context>/api/auth/google/callback`
    `https://<your-public-host>/<your-app-context>/api/admin/email-setup/callback`
-   Set `GMAIL_REDIRECT_URI` to that exact URL. Keep `GOOGLE_REDIRECT_URI` for the existing sign-in callback; the two redirect URIs are different.
-3. Configure `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` for the same OAuth web client already used by Google sign-in. Configure `APP_BASE_URL` as the public application base URL used to build admin links.
-4. Generate a random 32-byte AES key, Base64-encode it, and set it as `GMAIL_TOKEN_ENCRYPTION_KEY` in the deployment platform's secret/environment settings. For local PowerShell:
+   Set `GOOGLE_REDIRECT_URI` and `GMAIL_REDIRECT_URI` to the respective exact callback URLs. Configure `APP_BASE_URL` as the public application base URL used to build admin links.
+4. Generate a random 32-byte AES key, Base64-encode it, and set it as `GMAIL_TOKEN_ENCRYPTION_KEY` in the deployment platform's secret/environment settings. This key encrypts the database-stored OAuth client secret and Gmail tokens; it must remain outside the database and stable across restarts. For local PowerShell:
 
    ```powershell
    $bytes = New-Object byte[] 32
@@ -23,10 +24,11 @@ Forgot-password emails use the one global Gmail sender account connected by an a
    [Convert]::ToBase64String($bytes)
    ```
 
-   Keep this key stable and backed up. Changing or losing it makes the saved Gmail tokens undecryptable; administrators will have to reconnect the account.
+   Keep this key stable and backed up. Changing or losing it makes stored Gmail tokens and the Google OAuth client secret undecryptable. If the key is lost, provision a replacement key, re-enter the OAuth client credentials in Email Setup, and reconnect Gmail.
 5. Apply `database/migrations/V1__create_email_sender_config.sql` if not already applied, then run the manual schema SQL in [automatic Gmail replies](docs/gmail-auto-replies.md) before deployment. No auto-reply migration file is provided. Reconnect Gmail once to grant metadata access.
 6. If the OAuth consent screen is in Testing mode, add the authorizing administrator as a test user. Google testing-mode refresh tokens for non-basic scopes can expire after seven days. For ongoing production use, complete the consent-screen publishing and any Google verification requirements applicable to the project.
-7. Deploy the app over HTTPS, then sign in as an admin and use **Email Setup → Connect Gmail**. Select the desired sender account and grant access. The callback checks the granted send scope and verified Google account, then sends a one-time setup confirmation email to that account to verify Gmail API access. It replaces the stored sender only after those checks succeed.
+7. Deploy the app over HTTPS, sign in as an administrator, and open **Email Setup**. Enter the Google OAuth web client ID and secret there; the secret is encrypted at rest and is never returned to the page. This single per-database client is used for Google sign-in and Gmail authorization. Changing it disconnects the saved Gmail sender, which must then be connected again.
+8. Use **Connect Gmail**, select the desired sender account, and grant access. The callback checks the granted send scope and verified Google account, then sends a one-time setup confirmation email to that account to verify Gmail API access. It replaces the stored sender only after those checks succeed.
 
 No Gmail access/refresh tokens are entered manually. A missing or undecryptable sender setup disables email password reset; SMS reset remains available. Disconnect removes the application's stored credentials but does not revoke the Google grant in the user's Google Account settings.
 

@@ -15,6 +15,7 @@ import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.SecurityContext;
 import org.example.auth.JwtUtil;
 import org.example.notification.GmailEmailService;
+import org.example.notification.GoogleOAuthConfig;
 
 import java.io.IOException;
 import java.net.URI;
@@ -71,6 +72,40 @@ public class EmailSetupResource {
                     .build();
         } catch (GmailEmailService.EmailSetupException exception) {
             return setupPage(request, exception.getMessage(), Response.Status.SERVICE_UNAVAILABLE);
+        } catch (SQLException exception) {
+            LOGGER.log(Level.SEVERE, "Unable to load the Google OAuth configuration.", exception);
+            return setupPage(request,
+                    "Unable to read Google OAuth settings. Check that the V9 database migration has been applied.",
+                    Response.Status.SERVICE_UNAVAILABLE);
+        }
+    }
+
+    @POST
+    @Path("google-client")
+    public Response saveGoogleClient(
+            @FormParam("clientId") String clientId,
+            @FormParam("clientSecret") String clientSecret,
+            @Context SecurityContext securityContext,
+            @Context HttpServletRequest request) {
+        try {
+            boolean changed = GoogleOAuthConfig.save(
+                    clientId, clientSecret, currentAdminId(securityContext));
+            String message = changed
+                    ? "Google OAuth client credentials saved. If they changed, reconnect the Gmail sender."
+                    : "Google OAuth client credentials saved; the connected Gmail sender was preserved.";
+            return setupPage(request, message, Response.Status.OK);
+        } catch (IllegalArgumentException exception) {
+            return setupPage(request, exception.getMessage(), Response.Status.BAD_REQUEST);
+        } catch (SQLException exception) {
+            LOGGER.log(Level.SEVERE, "Unable to save the Google OAuth client configuration.", exception);
+            return setupPage(request,
+                    "Unable to save Google OAuth settings. Check that the V9 database migration has been applied.",
+                    Response.Status.INTERNAL_SERVER_ERROR);
+        } catch (RuntimeException exception) {
+            LOGGER.log(Level.SEVERE, "Unable to encrypt the Google OAuth client secret.", exception);
+            return setupPage(request,
+                    "Unable to encrypt the Google OAuth client secret. Verify GMAIL_TOKEN_ENCRYPTION_KEY is configured.",
+                    Response.Status.SERVICE_UNAVAILABLE);
         }
     }
 
@@ -192,6 +227,17 @@ public class EmailSetupResource {
         String base = base(request);
         String sender;
         String replyToEmail;
+        String googleClientId;
+        try {
+            googleClientId = GoogleOAuthConfig.configuredClientId();
+        } catch (SQLException exception) {
+            LOGGER.log(Level.WARNING, "Unable to read the Google OAuth client configuration.", exception);
+            googleClientId = null;
+            if (message == null) {
+                message = "Google OAuth settings are unavailable. Apply the V9 database migration.";
+                status = Response.Status.SERVICE_UNAVAILABLE;
+            }
+        }
         try {
             sender = GmailEmailService.validateStoredAuthorization();
         } catch (GmailEmailService.EmailSetupException exception) {
@@ -230,6 +276,21 @@ public class EmailSetupResource {
         }
 
         String content = "<h2>Email Setup</h2>"
+                + "<h3>Google OAuth client</h3>"
+                + "<p>Configure the Google OAuth web client used for Google sign-in and Gmail sender authorization. "
+                + "Changing the client credentials disconnects the current Gmail sender.</p>"
+                + (googleClientId == null
+                ? "<p>Google OAuth client is not configured.</p>"
+                : "<p>Configured client ID: <strong>" + escape(googleClientId) + "</strong></p>")
+                + "<form method=\"post\" action=\"" + escape(base)
+                + "/api/admin/email-setup/google-client\">"
+                + "<label for=\"clientId\">Google OAuth client ID</label> "
+                + "<input type=\"text\" id=\"clientId\" name=\"clientId\" maxlength=\"255\" required value=\""
+                + escape(googleClientId) + "\"><br>"
+                + "<label for=\"clientSecret\">Google OAuth client secret</label> "
+                + "<input type=\"password\" id=\"clientSecret\" name=\"clientSecret\" maxlength=\"1024\" "
+                + "autocomplete=\"new-password\" required>"
+                + "<button type=\"submit\">Save Google OAuth client</button></form>"
                 + "<p>This is the global sender mailbox used for forgot-password emails. "
                 + "Any administrator can connect a Google account; connecting another account replaces the current sender.</p>"
                 + (message == null ? "" : "<p role=\"status\">" + escape(message) + "</p>")
