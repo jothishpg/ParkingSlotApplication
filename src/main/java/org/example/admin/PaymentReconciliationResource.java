@@ -22,7 +22,7 @@ public class PaymentReconciliationResource {
                 + "<table border=\"1\"><tr><th>Booking</th><th>Request</th><th>Status</th><th>Amount INR</th><th>Expires</th><th>Action</th></tr>");
         try (Connection c = DatabaseConnection.getConnection(); Statement s = c.createStatement(); ResultSet r = s.executeQuery(
                 "SELECT pr.*, (SELECT COUNT(*) FROM payment_attempt pa WHERE pa.request_id=pr.request_id AND pa.disposition='REVIEW') AS review_count "
-                        + "FROM payment_request pr ORDER BY pr.created_at DESC LIMIT 100")) {
+                        + "FROM payment_request pr ORDER BY pr.pricing_cutoff DESC LIMIT 100")) {
             while (r.next()) {
                 PaymentService.Checkout checkout = PaymentService.read(r);
                 html.append("<tr><td>").append(checkout.booking()).append("</td><td>").append(checkout.id())
@@ -34,7 +34,7 @@ public class PaymentReconciliationResource {
                         .append("<button>Reconcile</button></form></td></tr>");
             }
         } catch (Exception e) {
-            return Response.status(503).entity("<p>Unable to load payment requests. Apply migration V5 and check the database.</p>").build();
+            return Response.status(503).entity("<p>Unable to load payment requests. Apply payment migrations through V14 and check the database.</p>").build();
         }
         html.append("</table>");
         return Response.ok(html.toString()).header("Cache-Control", "no-store").build();

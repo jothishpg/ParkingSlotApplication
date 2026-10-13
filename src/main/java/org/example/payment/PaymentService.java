@@ -38,10 +38,6 @@ public final class PaymentService {
         }
     }
 
-    public static Checkout start(long booking, long user) throws Exception {
-        return start(booking, user, true, true);
-    }
-
     public static Checkout start(long booking, long user, boolean sms, boolean whatsapp) throws Exception {
         String publicBase = RazorpayClient.required("APP_BASE_URL").replaceAll("/$", "");
         if (!publicBase.startsWith("https://"))
@@ -61,7 +57,7 @@ public final class PaymentService {
                     }
                 }
                 ensureActive(c, booking);
-                try (PreparedStatement s = c.prepareStatement("SELECT * FROM payment_request WHERE booking_id=? AND status IN ('CREATING','PENDING','REVIEW') ORDER BY created_at DESC FOR UPDATE")) {
+                try (PreparedStatement s = c.prepareStatement("SELECT * FROM payment_request WHERE booking_id=? AND status IN ('CREATING','PENDING','REVIEW') ORDER BY pricing_cutoff DESC FOR UPDATE")) {
                     s.setLong(1, booking);
                     try (ResultSet r = s.executeQuery()) {
                         if (r.next()) {
@@ -205,7 +201,7 @@ public final class PaymentService {
                     }
                 }
                 if (eventId != null) {
-                    try (PreparedStatement s = c.prepareStatement("INSERT INTO payment_webhook_event(config_id,event_id,event_type) VALUES (?,?,'payment') ON CONFLICT DO NOTHING")) {
+                    try (PreparedStatement s = c.prepareStatement("INSERT INTO payment_webhook_event(config_id,event_id) VALUES (?,?) ON CONFLICT DO NOTHING")) {
                         s.setLong(1, eventConfig);
                         s.setString(2, eventId);
                         if (s.executeUpdate() == 0) {
@@ -216,7 +212,8 @@ public final class PaymentService {
                 }
                 String payment = RazorpayClient.text(provider, "id");
                 boolean already = false;
-                try (PreparedStatement s = c.prepareStatement("SELECT 1 FROM payment WHERE gateway_payment_id=? AND payment_request_id=?")) {
+                try (PreparedStatement s = c.prepareStatement("SELECT 1 FROM payment_razorpay_detail d "
+                        + "WHERE d.gateway_payment_id=? AND d.request_id=?")) {
                     s.setString(1, payment);
                     s.setObject(2, checkout.id);
                     try (ResultSet r = s.executeQuery()) {
@@ -235,15 +232,14 @@ public final class PaymentService {
                     }
                 }
                 result = disposition(checkout, provider, closed);
-                try (PreparedStatement s = c.prepareStatement("INSERT INTO payment_attempt(gateway_payment_id,request_id,provider_status,provider_method,amount_paise,currency,disposition) "
-                        + "VALUES (?,?,?,?,?,?,?) ON CONFLICT(gateway_payment_id) DO UPDATE SET provider_status=EXCLUDED.provider_status,disposition=EXCLUDED.disposition,updated_at=CURRENT_TIMESTAMP WHERE payment_attempt.request_id=EXCLUDED.request_id")) {
+                try (PreparedStatement s = c.prepareStatement("INSERT INTO payment_attempt(gateway_payment_id,request_id,provider_status,provider_method,amount_paise,disposition) "
+                        + "VALUES (?,?,?,?,?,?) ON CONFLICT(gateway_payment_id) DO UPDATE SET provider_status=EXCLUDED.provider_status,disposition=EXCLUDED.disposition,updated_at=CURRENT_TIMESTAMP WHERE payment_attempt.request_id=EXCLUDED.request_id")) {
                     s.setString(1, payment);
                     s.setObject(2, checkout.id);
                     s.setString(3, provider.path("status").asText());
                     s.setString(4, provider.path("method").asText());
                     s.setLong(5, provider.path("amount").asLong());
-                    s.setString(6, provider.path("currency").asText());
-                    s.setString(7, result);
+                    s.setString(6, result);
                     s.executeUpdate();
                 }
                 if (result.equals("COMPLETED")) {
@@ -262,12 +258,22 @@ public final class PaymentService {
                         s.setBigDecimal(4, BigDecimal.valueOf(checkout.paise, 2));
                         s.executeUpdate();
                     }
-                    try (PreparedStatement s = c.prepareStatement("INSERT INTO payment(booking_id,payment_method,verified_by,payment_status,payment_request_id,gateway_payment_id,gateway_method) VALUES (?,NULL,?,'SUCCESS',?,?,?)")) {
+                    long paymentId;
+                    try (PreparedStatement s = c.prepareStatement("INSERT INTO payment(booking_id,payment_method_id,verified_by,payment_status) "
+                            + "VALUES (?,(SELECT payment_method_id FROM payment_method WHERE method_code=?),?,'SUCCESS') RETURNING payment_id")) {
                         s.setLong(1, checkout.booking);
-                        s.setLong(2, assigner);
-                        s.setObject(3, checkout.id);
-                        s.setString(4, payment);
-                        s.setString(5, provider.path("method").asText());
+                        s.setString(2, "RAZORPAY");
+                        s.setLong(3, assigner);
+                        try (ResultSet r = s.executeQuery()) {
+                            if (!r.next()) throw new SQLException("Payment insert did not return an ID.");
+                            paymentId = r.getLong("payment_id");
+                        }
+                    }
+                    try (PreparedStatement s = c.prepareStatement("INSERT INTO payment_razorpay_detail(payment_id,request_id,gateway_payment_id,gateway_method) VALUES (?,?,?,?)")) {
+                        s.setLong(1, paymentId);
+                        s.setObject(2, checkout.id);
+                        s.setString(3, payment);
+                        s.setString(4, provider.path("method").asText());
                         s.executeUpdate();
                     }
                     try (PreparedStatement s = c.prepareStatement("UPDATE slot SET state='AVAILABLE' WHERE slot_id=(SELECT slot_id FROM booking WHERE booking_id=?)")) {

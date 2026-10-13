@@ -382,7 +382,7 @@ public class BookingResource {
         String base = base(request);
         if ("ONLINE".equals(paymentMethod)) {
             try {
-                PaymentService.Checkout checkout = PaymentService.start(bookingId, currentUserId(securityContext));
+                PaymentService.Checkout checkout = PaymentService.start(bookingId, currentUserId(securityContext), true, true);
                 return redirect(RazorpaySetupResource.base(request) + "/api/payments/razorpay/checkout/" + checkout.id());
             } catch (Exception exception) {
                 LOGGER.log(Level.WARNING, "Unable to initiate Razorpay checkout: " + exception.getClass().getSimpleName());
@@ -409,8 +409,10 @@ public class BookingResource {
                 VALUES (?, CURRENT_TIMESTAMP, ?, ?)
                 """;
         String paymentSql = """
-                INSERT INTO payment (booking_id, payment_method, verified_by, payment_status)
-                VALUES (?, ?, ?, 'SUCCESS')
+                INSERT INTO payment (booking_id, payment_method_id, verified_by, payment_status)
+                SELECT ?, pm.payment_method_id, ?, 'SUCCESS'
+                FROM payment_method pm
+                WHERE pm.method_code = ?
                 """;
         String updateSlotSql = "UPDATE slot SET state = 'AVAILABLE' WHERE slot_id = ?";
 
@@ -463,9 +465,11 @@ public class BookingResource {
 
                 try (PreparedStatement statement = connection.prepareStatement(paymentSql)) {
                     statement.setLong(1, bookingId);
-                    statement.setString(2, paymentMethod);
-                    statement.setLong(3, currentUserId(securityContext));
-                    statement.executeUpdate();
+                    statement.setLong(2, currentUserId(securityContext));
+                    statement.setString(3, paymentMethod);
+                    if (statement.executeUpdate() != 1) {
+                        throw new SQLException("Payment method is not configured.");
+                    }
                 }
 
                 long slotId;
@@ -552,12 +556,14 @@ public class BookingResource {
                 """.formatted(base));
         String sql = """
                 SELECT b.vehicle_number, f.floor_name, s.slot_name,
-                       da.amount, COALESCE(p.gateway_method, p.payment_method::text) AS payment_method, p.payment_status,
+                       da.amount, COALESCE(prd.gateway_method, pm.method_code) AS payment_method, p.payment_status,
                        p.verified_by
                 FROM payment p
                 JOIN booking b ON b.booking_id = p.booking_id
                 JOIN slot s ON s.slot_id = b.slot_id
                 JOIN floor f ON f.floor_id = s.floor_id
+                LEFT JOIN payment_razorpay_detail prd ON prd.payment_id = p.payment_id
+                JOIN payment_method pm ON pm.payment_method_id = p.payment_method_id
                 LEFT JOIN duration_amount da ON da.booking_id = b.booking_id
                 ORDER BY p.payment_id DESC
                 """;

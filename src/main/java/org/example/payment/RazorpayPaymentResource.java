@@ -33,23 +33,10 @@ public class RazorpayPaymentResource {
     @RolesAllowed("TICKET_ASSIGNER")
     @Produces(MediaType.TEXT_HTML)
     public Response checkout(@PathParam("id") UUID id, @Context HttpServletRequest request) {
-        return renderCheckout(id, request, null);
+        return renderCheckout(id, request);
     }
 
-    @GET
-    @Path("customer/{id}")
-    @PermitAll
-    @Produces(MediaType.TEXT_HTML)
-    public Response customerCheckout(@PathParam("id") UUID id, @QueryParam("token") String token, @Context HttpServletRequest request) {
-        try {
-            PaymentMessaging.authorize(id, token);
-            return renderCheckout(id, request, token);
-        } catch (Exception e) {
-            return Response.status(404).entity("<p>Payment link not found.</p>").build();
-        }
-    }
-
-    private Response renderCheckout(UUID id, HttpServletRequest request, String customerToken) {
+    private Response renderCheckout(UUID id, HttpServletRequest request) {
         try {
             PaymentService.Checkout c = PaymentService.get(id);
             MerchantConfig config = MerchantConfig.load(c.config());
@@ -58,12 +45,10 @@ public class RazorpayPaymentResource {
                 return Response.status(409).entity("<p>This payment window is closed. Check payment status or search the vehicle again.</p>").build();
             String base = RazorpaySetupResource.base(request);
             String customerLink = "";
-            if (customerToken == null) {
-                try (Connection db = DatabaseConnection.getConnection(); PreparedStatement s = db.prepareStatement("SELECT payment_link_url FROM payment_request WHERE request_id=?")) {
-                    s.setObject(1, id);
-                    try (ResultSet r = s.executeQuery()) {
-                        if (r.next()) customerLink = Objects.toString(r.getString(1), "");
-                    }
+            try (Connection db = DatabaseConnection.getConnection(); PreparedStatement s = db.prepareStatement("SELECT payment_link_url FROM payment_request WHERE request_id=?")) {
+                s.setObject(1, id);
+                try (ResultSet r = s.executeQuery()) {
+                    if (r.next()) customerLink = Objects.toString(r.getString(1), "");
                 }
             }
             Map<String, Object> options = new LinkedHashMap<>();
@@ -75,8 +60,7 @@ public class RazorpayPaymentResource {
             options.put("order_id", c.order());
             options.put("timeout", Math.max(1, c.expires().getEpochSecond() - Instant.now().getEpochSecond()));
             String json = RazorpayClient.JSON.writeValueAsString(options).replace("<", "\\u003c");
-            String endpoint = RazorpayClient.JSON.writeValueAsString(base + "/api/payments/razorpay/" + (customerToken == null ? "checkout/" : "customer/") + id).replace("<", "\\u003c");
-            String access = customerToken == null ? "" : "?token=" + customerToken;
+            String endpoint = RazorpayClient.JSON.writeValueAsString(base + "/api/payments/razorpay/checkout/" + id).replace("<", "\\u003c");
             return Response.ok("""
                             <!doctype html><meta charset="utf-8"><title>Parking payment</title>
                             <h1>Parking payment</h1><p>Amount: INR %s</p><p id="message">Payment is valid until the displayed request deadline.</p>
@@ -84,7 +68,7 @@ public class RazorpayPaymentResource {
                             %s
                             <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
                             <script>
-                            const options=%s, endpoint=%s, expires=%d, access='%s', initial='%s';
+                            const options=%s, endpoint=%s, expires=%d, initial='%s';
                             const message=document.getElementById('message'), button=document.getElementById('pay');
                             let busy=false, gateway;
                             function show(s) {
@@ -95,20 +79,20 @@ public class RazorpayPaymentResource {
                               if(s==='COMPLETED'||s==='PAID'||s==='REVIEW') button.disabled=true;
                             }
                             async function check() {
-                              try { const response=await fetch(endpoint+'/status'+access,{cache:'no-store'});const data=await response.json();
+                              try { const response=await fetch(endpoint+'/status',{cache:'no-store'});const data=await response.json();
                                 if(!response.ok) throw Error(data.error||'Unable to check payment status.');show(data.status);
                               } catch(e) { message.textContent=e.message; }
                             }
                             options.handler=async function(result) {
                               try {
                                 const data=new URLSearchParams(result);
-                                const response=await fetch(endpoint+'/verify'+access,{method:'POST',body:data});
+                                const response=await fetch(endpoint+'/verify',{method:'POST',body:data});
                                 const status=await response.json();if(!response.ok) throw Error(status.error||'Unable to verify payment. Use Check payment status.');
                                 show(status.status);
                               } catch(e) {message.textContent=e.message;signal('CLIENT_ERROR');} finally {busy=false;}
                             };
                             async function signal(event) {
-                              try {await fetch(endpoint+'/event'+access,{method:'POST',body:new URLSearchParams({event})});}catch(e){}
+                              try {await fetch(endpoint+'/event',{method:'POST',body:new URLSearchParams({event})});}catch(e){}
                             }
                             options.modal={ondismiss:function(){busy=false;check().then(()=>signal('CLOSED'));}};
                             button.onclick=function(){if(busy||Date.now()>=expires)return;busy=true;
@@ -119,10 +103,10 @@ public class RazorpayPaymentResource {
                             if(initial!=='PENDING'||Date.now()>=expires) button.disabled=true;
                             show(initial);
                             </script>
-                            """.formatted(java.math.BigDecimal.valueOf(c.paise(), 2), customerToken == null
-                                    ? (customerLink.isBlank() ? "" : "<p>Customer payment link: <a href=\"" + RazorpaySetupResource.html(customerLink) + "\">" + RazorpaySetupResource.html(customerLink) + "</a></p><p>SMS and WhatsApp link messages are queued automatically.</p>")
-                                    + "<a href=\"" + RazorpaySetupResource.html(base) + "/api/booking/checkout\">Back to checkout</a>" : "",
-                            json, endpoint, c.expires().toEpochMilli(), access, c.status()))
+                            """.formatted(java.math.BigDecimal.valueOf(c.paise(), 2),
+                            (customerLink.isBlank() ? "" : "<p>Customer payment link: <a href=\"" + RazorpaySetupResource.html(customerLink) + "\">" + RazorpaySetupResource.html(customerLink) + "</a></p><p>SMS and WhatsApp link messages are queued automatically.</p>")
+                                    + "<a href=\"" + RazorpaySetupResource.html(base) + "/api/booking/checkout\">Back to checkout</a>",
+                            json, endpoint, c.expires().toEpochMilli(), c.status()))
                     .header("Cache-Control", "no-store")
                     .header("Referrer-Policy", "no-referrer").header("X-Robots-Tag", "noindex, nofollow").build();
         } catch (Exception e) {
@@ -239,56 +223,6 @@ public class RazorpayPaymentResource {
         try {
             PaymentMessaging.browserEvent(id, event);
             return Response.ok(Map.of("received", true)).build();
-        } catch (Exception e) {
-            return error(e);
-        }
-    }
-
-    @GET
-    @Path("customer/{id}/status")
-    @PermitAll
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response customerStatus(@PathParam("id") UUID id, @QueryParam("token") String token) {
-        try {
-            PaymentMessaging.authorize(id, token);
-            return Response.ok(Map.of("status", reconcile(id, false))).header("Cache-Control", "no-store").build();
-        } catch (jakarta.ws.rs.NotFoundException e) {
-            return Response.status(404).build();
-        } catch (Exception e) {
-            return error(e);
-        }
-    }
-
-    @POST
-    @Path("customer/{id}/verify")
-    @PermitAll
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response customerVerify(@PathParam("id") UUID id, @QueryParam("token") String token,
-                                   @FormParam("razorpay_order_id") String order, @FormParam("razorpay_payment_id") String payment,
-                                   @FormParam("razorpay_signature") String signature) {
-        try {
-            PaymentMessaging.authorize(id, token);
-            return Response.ok(Map.of("status", PaymentService.verify(id, order, payment, signature))).build();
-        } catch (jakarta.ws.rs.NotFoundException e) {
-            return Response.status(404).build();
-        } catch (Exception e) {
-            return error(e);
-        }
-    }
-
-    @POST
-    @Path("customer/{id}/event")
-    @PermitAll
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response customerEvent(@PathParam("id") UUID id, @QueryParam("token") String token, @FormParam("event") String event) {
-        try {
-            PaymentMessaging.authorize(id, token);
-            PaymentMessaging.browserEvent(id, event);
-            return Response.ok(Map.of("received", true)).build();
-        } catch (jakarta.ws.rs.NotFoundException e) {
-            return Response.status(404).build();
         } catch (Exception e) {
             return error(e);
         }

@@ -7,76 +7,8 @@ import java.sql.*;
 import java.time.Instant;
 import java.util.UUID;
 
-/**
- * Customer links are capabilities: possession grants access only to this payment request.
- */
 public final class PaymentMessaging {
     private PaymentMessaging() {
-    }
-
-    public static String prepare(UUID id, boolean sms, boolean whatsapp, long assigner) throws Exception {
-        String base = RazorpayClient.required("APP_BASE_URL").replaceAll("/$", "");
-        if (!base.startsWith("https://"))
-            throw new IllegalStateException("Use a public HTTPS APP_BASE_URL for customer payment links.");
-        try (Connection c = DatabaseConnection.getConnection()) {
-            c.setAutoCommit(false);
-            try (PreparedStatement s = c.prepareStatement("SELECT * FROM payment_request WHERE request_id=? FOR UPDATE")) {
-                s.setObject(1, id);
-                try (ResultSet r = s.executeQuery()) {
-                    if (!r.next()) throw new IllegalArgumentException("Payment request not found.");
-                    if (r.getString("customer_token_hash") != null) {
-                        String existingLink = r.getString("payment_link_url");
-                        c.commit();
-                        return existingLink;
-                    }
-                    String phone;
-                    try (PreparedStatement booking = c.prepareStatement("SELECT phone_number FROM booking WHERE booking_id=?")) {
-                        booking.setLong(1, r.getLong("booking_id"));
-                        try (ResultSet b = booking.executeQuery()) {
-                            b.next();
-                            phone = b.getString(1);
-                        }
-                    }
-                    if ((sms || whatsapp) && (phone == null || !phone.matches("\\d{10}")))
-                        throw new IllegalArgumentException("A valid 10-digit customer phone number is required for payment messages.");
-                    String token = PaymentCrypto.random();
-                    String link = base + "/api/payments/razorpay/customer/" + id + "?token=" + token;
-                    try (PreparedStatement update = c.prepareStatement("UPDATE payment_request SET customer_phone=?,sms_consent=?,whatsapp_consent=?,"
-                            + "consent_recorded_at=CURRENT_TIMESTAMP,consent_recorded_by=?,customer_token_hash=?,payment_link_url=? WHERE request_id=?")) {
-                        update.setString(1, phone);
-                        update.setBoolean(2, sms);
-                        update.setBoolean(3, whatsapp);
-                        update.setLong(4, assigner);
-                        update.setString(5, PaymentCrypto.hash(token));
-                        update.setString(6, link);
-                        update.setObject(7, id);
-                        update.executeUpdate();
-                    }
-                    enqueue(c, id, "LINK", "LINK");
-                    c.commit();
-                    return link;
-                }
-            } catch (Exception e) {
-                c.rollback();
-                throw e;
-            }
-        }
-    }
-
-    public static boolean authorized(String expectedHash, String token) {
-        return expectedHash != null && token != null && token.matches("[A-Za-z0-9_-]{43}")
-                && java.security.MessageDigest.isEqual(expectedHash.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                PaymentCrypto.hash(token).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-    }
-
-    public static void authorize(UUID id, String token) throws Exception {
-        try (Connection c = DatabaseConnection.getConnection(); PreparedStatement s = c.prepareStatement(
-                "SELECT customer_token_hash FROM payment_request WHERE request_id=?")) {
-            s.setObject(1, id);
-            try (ResultSet r = s.executeQuery()) {
-                if (!r.next() || !authorized(r.getString(1), token)) throw new jakarta.ws.rs.NotFoundException();
-            }
-        }
     }
 
     public static String text(String event, long booking, long paise, String link, Instant expiry) {

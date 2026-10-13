@@ -40,14 +40,6 @@ class PaymentMessagingTest {
             assertFalse(message.contains("resending"));assertFalse(message.contains("https://rzp.io/example"));
         }
     }
-    @Test void customerLinkRequiresTheMatchingCapability() {
-        String token=PaymentCrypto.random(), hash=PaymentCrypto.hash(token);
-        assertTrue(PaymentMessaging.authorized(hash,token));
-        assertFalse(PaymentMessaging.authorized(hash,PaymentCrypto.random()));
-        assertFalse(PaymentMessaging.authorized(hash,null));
-        assertFalse(PaymentMessaging.authorized(null,token));
-        assertFalse(PaymentMessaging.authorized(hash,"short"));
-    }
     @Test void closingCheckoutDoesNotClaimPaymentFailedOrSucceeded() {
         String message=PaymentMessaging.text("CLOSED",1,3400,null,Instant.now());
         assertTrue(message.contains("may still be processing"));

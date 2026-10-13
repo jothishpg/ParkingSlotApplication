@@ -1,5 +1,5 @@
 // MultiParkingSystem PostgreSQL public schema
-// Generated from the connected parking_db database on 2026-10-13.
+// Updated for payment schema migrations through V16.
 // Partial indexes are documented below because DBML does not faithfully
 // express PostgreSQL predicates on indexes.
 
@@ -211,8 +211,6 @@ Table password_reset_requests {
 
   indexes {
     (user_id, created_at) [name: 'idx_prr_user_created']
-    action_token_hash [unique, name: 'uq_prr_action_token_hash']
-    expires_at [name: 'idx_prr_open_expiry']
   }
 
   checks {
@@ -228,25 +226,28 @@ Table password_reset_requests {
   }
 }
 
+Table payment_method {
+  payment_method_id smallint [pk, not null, note: '1=CASH, 2=RAZORPAY']
+  method_code varchar(20) [not null, unique]
+}
+
 Table payment {
   payment_id bigint [pk, increment]
   booking_id bigint [not null]
-  payment_method varchar(50)
+  payment_method_id smallint [not null]
   verified_by bigint
   payment_status varchar(20) [not null]
-  payment_request_id uuid
-  gateway_payment_id text
-  gateway_method text
-
-  indexes {
-    payment_request_id [unique, name: 'payment_request_success_unique']
-    gateway_payment_id [unique, name: 'payment_gateway_payment_unique']
-  }
 
   checks {
-    `payment_method IN ('CASH', 'UPI', 'CARD', 'WALLET')`
     `payment_status IN ('SUCCESS', 'FAILED', 'WAITING')`
   }
+}
+
+Table payment_razorpay_detail {
+  payment_id bigint [pk, not null]
+  request_id uuid [not null, unique]
+  gateway_payment_id text [not null, unique]
+  gateway_method text
 }
 
 Table payment_attempt {
@@ -255,7 +256,6 @@ Table payment_attempt {
   provider_status text [not null]
   provider_method text
   amount_paise bigint [not null]
-  currency text [not null]
   disposition varchar(20) [not null]
   updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 
@@ -297,22 +297,16 @@ Table payment_request {
   config_id bigint [not null]
   initiated_by bigint [not null]
   amount_paise bigint [not null]
-  currency varchar(3) [not null, default: 'INR']
   pricing_cutoff timestamptz [not null]
   duration_minutes bigint [not null]
   expires_at timestamptz [not null]
   gateway_order_id text [unique]
   gateway_payment_link_id text [unique]
   payment_link_url text
-  channel varchar(10) [not null, default: 'CHECKOUT']
   status varchar(20) [not null, default: 'CREATING']
-  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
   customer_phone text
   sms_consent boolean [not null, default: false]
   whatsapp_consent boolean [not null, default: false]
-  consent_recorded_at timestamptz
-  consent_recorded_by bigint
-  customer_token_hash text [unique]
   next_reconcile_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
   reconcile_errors int [not null, default: 0]
 
@@ -321,8 +315,6 @@ Table payment_request {
   }
 
   checks {
-    `channel IN ('CHECKOUT', 'WHATSAPP', 'SMS', 'EMAIL')`
-    `currency = 'INR'`
     `duration_minutes >= 1`
     `status IN ('CREATING', 'PENDING', 'EXPIRED', 'PAID', 'REVIEW')`
   }
@@ -331,7 +323,6 @@ Table payment_request {
 Table payment_webhook_event {
   config_id bigint [not null]
   event_id text [not null]
-  event_type text [not null]
   processed_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 
   indexes {
@@ -341,33 +332,11 @@ Table payment_webhook_event {
 
 Table razorpay_config {
   config_id bigint [pk, increment, note: 'GENERATED ALWAYS AS IDENTITY']
-  auth_type varchar(10) [not null]
-  mode varchar(4) [not null]
-  account_id text
   public_key text [not null]
   encrypted_secret text [not null]
-  encrypted_refresh_token text
-  access_expires_at timestamptz
-  encrypted_signature_secret text [not null]
   active boolean [not null, default: true]
   configured_by bigint [not null]
   created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
-
-  checks {
-    `auth_type IN ('OAUTH', 'KEYS')`
-    `mode IN ('test', 'live')`
-  }
-}
-
-Table razorpay_oauth_state {
-  state_hash text [pk, not null]
-  admin_id bigint [not null]
-  mode varchar(4) [not null]
-  expires_at timestamptz [not null, default: `CURRENT_TIMESTAMP + INTERVAL '10 minutes'`]
-
-  checks {
-    `mode IN ('test', 'live')`
-  }
 }
 
 Table roles {
@@ -535,18 +504,18 @@ Ref: meta_waba.business_id > meta_app_config.business_id [delete: cascade]
 Ref: oauth_auth.user_id > users.user_id [delete: cascade]
 Ref: password_reset_requests.user_id > users.user_id [delete: cascade]
 Ref: payment.booking_id > booking.booking_id
+Ref: payment.payment_method_id > payment_method.payment_method_id
 Ref: payment.verified_by > users.user_id
-Ref: payment.payment_request_id > payment_request.request_id
+Ref: payment_razorpay_detail.payment_id - payment.payment_id [delete: cascade]
+Ref: payment_razorpay_detail.request_id - payment_request.request_id
 Ref: payment_attempt.request_id > payment_request.request_id
 Ref: payment_message_outbox.request_id > payment_request.request_id
 Ref: payment_notification_outbox.booking_id - booking.booking_id
 Ref: payment_request.booking_id > booking.booking_id
 Ref: payment_request.config_id > razorpay_config.config_id
 Ref: payment_request.initiated_by > users.user_id
-Ref: payment_request.consent_recorded_by > users.user_id
 Ref: payment_webhook_event.config_id > razorpay_config.config_id
 Ref: razorpay_config.configured_by > users.user_id
-Ref: razorpay_oauth_state.admin_id > users.user_id
 Ref: slot.floor_id > floor.floor_id
 Ref: slot.created_by > users.user_id
 Ref: slot_block.user_id > users.user_id
@@ -559,19 +528,27 @@ Ref: vehicle_rate.vehicle_type_id > vehicle_type.vehicle_type_id
 Ref: whatsapp_message_template_assignment.message_key - whatsapp_message_type.message_key [delete: cascade]
 Ref: whatsapp_message_template_assignment.assigned_by_user_id > users.user_id [delete: set null]
 
-// Partial PostgreSQL indexes present in the inspected database:
-// - meta_system_user: UNIQUE(role) WHERE role='ADMIN' AND is_active=true
-// - meta_system_user_token: UNIQUE(system_user_id) WHERE status='ACTIVE'
-// - password_reset_requests: UNIQUE(user_id) WHERE status IN ('PENDING','VERIFIED')
-// - payment: UNIQUE(gateway_payment_id) WHERE gateway_payment_id IS NOT NULL
-// - payment: UNIQUE(payment_request_id) WHERE payment_request_id IS NOT NULL
-// - payment_request: UNIQUE(booking_id) WHERE status IN ('CREATING','PENDING')
-// - payment_message_outbox: INDEX(next_attempt_at) WHERE status IN ('READY','PROCESSING')
-// - razorpay_config: UNIQUE(active) WHERE active
-// - password_reset_requests: INDEX(expires_at) WHERE status IN ('PENDING','VERIFIED')
+// Partial PostgreSQL indexes in the live database (documented here because
+// DBML does not faithfully preserve their predicates):
+// - meta_system_user: meta_one_active_admin_system_user UNIQUE(role)
+//   WHERE role='ADMIN' AND is_active=true
+// - meta_system_user_token: meta_one_active_token_per_system_user
+//   UNIQUE(system_user_id) WHERE status='ACTIVE'
+// - password_reset_requests: uq_prr_one_open_per_user UNIQUE(user_id)
+//   WHERE status IN ('PENDING','VERIFIED')
+// - password_reset_requests: uq_prr_action_token_hash UNIQUE(action_token_hash)
+//   WHERE action_token_hash IS NOT NULL
+// - password_reset_requests: idx_prr_open_expiry INDEX(expires_at)
+//   WHERE status IN ('PENDING','VERIFIED')
+// - payment_razorpay_detail: payment_request_success_unique UNIQUE(request_id)
+// - payment_request: payment_one_open_request UNIQUE(booking_id)
+//   WHERE status IN ('CREATING','PENDING')
+// - payment_message_outbox: payment_message_dispatch INDEX(next_attempt_at)
+//   WHERE status IN ('READY','PROCESSING')
+// - razorpay_config: razorpay_one_active_config UNIQUE(active) WHERE active
 //
 // Schema drift to be aware of: the live database has the partial unique index
 // uq_prr_one_open_per_user on password_reset_requests(user_id), while the
 // repository's V10 migration defines password_reset_open_user_purpose_idx on
-// (user_id, purpose). The diagram above describes the live database, not the
-// post-V10 intended index.
+// (user_id, purpose). The partial index documented above describes the live
+// database; the migration defines the intended post-V10 index.
