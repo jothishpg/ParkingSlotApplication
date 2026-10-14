@@ -45,6 +45,7 @@ public class AppStartupListener implements ServletContextListener {
 
     @Override
     public void contextDestroyed(ServletContextEvent event) {
+        DatabaseConnection.closePool();
         LOGGER.info("Application shutting down.");
     }
 

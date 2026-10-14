@@ -10,7 +10,7 @@ class PaymentLinkServiceTest {
     private final UUID request=UUID.randomUUID();
     private PaymentService.Checkout checkout() {
         Instant now=Instant.parse("2026-10-11T10:00:00Z");
-        return new PaymentService.Checkout(request,1,1,3400,1,now,now.plusSeconds(900),null,"PENDING");
+        return new PaymentService.Checkout(request,1,1,3400,1,now,now.plusSeconds(900),"PENDING");
     }
     private ObjectNode link() {
         return RazorpayClient.JSON.createObjectNode().put("reference_id",request.toString()).put("amount",3400)
@@ -26,6 +26,15 @@ class PaymentLinkServiceTest {
     }
     @Test void callbackSignaturePayloadUsesRazorpayFieldOrder() {
         assertEquals("plink_123|reference|paid|pay_123",PaymentLinkService.callbackPayload("plink_123","reference","paid","pay_123"));
+    }
+    @Test void capturedPaymentFromNativeLinkDoesNotRequireAnOrderId() {
+        PaymentService.Checkout checkout=checkout();
+        ObjectNode payment=RazorpayClient.JSON.createObjectNode().put("id","pay_123").put("status","captured")
+                .put("captured",true).put("amount",3400).put("currency","INR").put("amount_refunded",0)
+                .put("created_at",checkout.cutoff().plusSeconds(1).getEpochSecond());
+        assertTrue(PaymentService.matches(checkout,payment));
+        assertEquals("COMPLETED",PaymentService.disposition(checkout,payment,false));
+        assertEquals("REVIEW",PaymentService.disposition(checkout,payment.put("amount_refunded",100),false));
     }
     @Test void applicationWindowIsFifteenMinutes() {assertEquals(900,PaymentService.PAYMENT_WINDOW_SECONDS);}
     @Test void definitiveClientRejectionsDifferFromAmbiguousServerErrors() {

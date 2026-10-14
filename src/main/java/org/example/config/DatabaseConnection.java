@@ -1,44 +1,45 @@
 package org.example.config;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 
 public class DatabaseConnection {
+    private static final int MAX_POOL_SIZE = 5;
 
-    private static final String host = getRequiredEnvironmentVariable("DB_HOST");
-    private static final String port = getRequiredEnvironmentVariable("DB_PORT");
-    private static final String  database = getRequiredEnvironmentVariable("DB_NAME");
-
-    private static final String DATABASE_URL =
-            "jdbc:postgresql://" +
-                    host + ":" +
-                    port + "/" +
-                    database +
-                    "?sslmode=require";
-
-    private static final String DATABASE_USERNAME =
-            getRequiredEnvironmentVariable("DB_USERNAME");
-
-    private static final String DATABASE_PASSWORD =
-            getRequiredEnvironmentVariable("DB_PASSWORD");
+    private static HikariDataSource dataSource;
 
     public static Connection getConnection() throws SQLException {
-
-        try {
-            Class.forName("org.postgresql.Driver");
-        } catch (ClassNotFoundException exception) {
-            throw new SQLException(
-                    "PostgreSQL JDBC driver is not available.",
-                    exception
-            );
+        HikariDataSource pool;
+        synchronized (DatabaseConnection.class) {
+            if (dataSource == null || dataSource.isClosed()) {
+                dataSource = createDataSource();
+            }
+            pool = dataSource;
         }
+        return pool.getConnection();
+    }
 
-        return DriverManager.getConnection(
-                DATABASE_URL,
-                DATABASE_USERNAME,
-                DATABASE_PASSWORD
-        );
+    private static HikariDataSource createDataSource() {
+        String url = "jdbc:postgresql://" + getRequiredEnvironmentVariable("DB_HOST")
+                + ":" + getRequiredEnvironmentVariable("DB_PORT") + "/"
+                + getRequiredEnvironmentVariable("DB_NAME") + "?sslmode=require";
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(url);
+        config.setDriverClassName("org.postgresql.Driver");
+        config.setUsername(getRequiredEnvironmentVariable("DB_USERNAME"));
+        config.setPassword(getRequiredEnvironmentVariable("DB_PASSWORD"));
+        config.setMaximumPoolSize(MAX_POOL_SIZE);
+        return new HikariDataSource(config);
+    }
+
+    public static synchronized void closePool() {
+        if (dataSource != null) {
+            dataSource.close();
+            dataSource = null;
+        }
     }
 
     private static String getRequiredEnvironmentVariable(String name) {

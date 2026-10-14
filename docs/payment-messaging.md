@@ -14,7 +14,7 @@ Razorpay's built-in notification sends payment-link SMS; it is not a general sen
 
 ## Payment status and recovery
 
-Only a matching captured payment completes checkout and releases the slot. Signed native link events bind the link, reference and order to the saved request. The native callback verifies link_id|reference_id|status|payment_id with the merchant signature secret and then checks captured payments through Razorpay. Clicks, redirects and message delivery alone never count as success.
+Only a matching captured payment completes checkout and releases the slot. Signed native link events bind the link and reference to the saved request. Reconciliation fetches the saved or recovered payment link and verifies its attached payment IDs through Razorpay. The native callback verifies link_id|reference_id|status|payment_id with the merchant signature secret and then checks captured payments through Razorpay. Clicks, redirects and message delivery alone never count as success.
 
 WhatsApp messages cover the link, success, confirmed failure, payment review, expiry and service errors. Provider-confirmed network/timeout or server failures receive corresponding text. When a network/server error leaves payment uncertain, the message says it is unconfirmed and asks the customer not to pay again until checked. Closing or losing connectivity on Razorpay's external hosted page is not directly observable; webhooks and reconciliation establish status afterward.
 
@@ -36,7 +36,7 @@ Razorpay receipts are separate from the application's checkout notification. No 
 
 ## Webhooks
 
-Keep the existing webhook URL and RAZORPAY_WEBHOOK_SECRET. Subscribe to payment_link.paid, payment_link.expired, payment_link.cancelled and optionally payment_link.partially_paid, alongside payment.captured, payment.failed, order.paid and the OAuth authorization-revoked event. Callbacks use public HTTPS APP_BASE_URL.
+Keep the existing webhook URL and RAZORPAY_WEBHOOK_SECRET. Subscribe to payment_link.paid, payment_link.expired and payment_link.cancelled. Partial payments are disabled for application-created links. Callbacks use public HTTPS APP_BASE_URL.
 
 Inspect queue state without exposing customer links:
 

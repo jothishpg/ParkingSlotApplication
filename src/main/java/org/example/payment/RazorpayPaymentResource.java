@@ -146,47 +146,7 @@ public class RazorpayPaymentResource {
     }
 
     public static String reconcile(UUID id, boolean recover) throws Exception {
-        PaymentService.Checkout c = PaymentService.get(id);
-        if (c.status().equals("PAID")) return "PAID";
-        if (PaymentLinkService.linkId(id) != null || (c.order() == null && c.status().equals("CREATING")))
-            return PaymentLinkService.reconcile(id, recover);
-        MerchantConfig config = MerchantConfig.load(c.config());
-        if (c.order() == null) {
-            if (!recover) return "PENDING";
-            JsonNode orders = RazorpayClient.api("orders?receipt=" + id + "&count=100", null, config.authorization());
-            String order = null;
-            for (JsonNode o : orders.path("items"))
-                if (id.toString().equals(o.path("receipt").asText()) && o.path("amount").asLong() == c.paise()) {
-                    if (order != null)
-                        throw new IllegalStateException("Multiple matching orders require manual review.");
-                    order = RazorpayClient.text(o, "id");
-                }
-            if (order == null)
-                throw new IllegalStateException("No matching order found. Confirm in Razorpay before resolving this request manually.");
-            try (Connection db = DatabaseConnection.getConnection(); PreparedStatement s = db.prepareStatement("UPDATE payment_request SET gateway_order_id=?,status='PENDING' WHERE request_id=? AND gateway_order_id IS NULL")) {
-                s.setString(1, order);
-                s.setObject(2, id);
-                s.executeUpdate();
-            }
-            c = PaymentService.get(id);
-        }
-        JsonNode payments = RazorpayClient.api("orders/" + c.order() + "/payments", null, config.authorization());
-        boolean authorized = false;
-        String result = c.status();
-        for (JsonNode payment : payments.path("items")) {
-            if (payment.path("status").asText().equals("authorized")) authorized = true;
-            String processed = PaymentService.process(c, payment, null, null);
-            if (processed.equals("COMPLETED") || processed.equals("REVIEW")) result = processed;
-        }
-        if (result.equals("COMPLETED") || result.equals("REVIEW")) return result;
-        if (!authorized && c.expires().isBefore(Instant.now())) {
-            try (Connection db = DatabaseConnection.getConnection(); PreparedStatement s = db.prepareStatement("UPDATE payment_request SET status='EXPIRED' WHERE request_id=? AND status='PENDING'")) {
-                s.setObject(1, id);
-                s.executeUpdate();
-            }
-            return PaymentService.get(id).status();
-        }
-        return result;
+        return PaymentLinkService.reconcile(id, recover);
     }
 
     @POST
@@ -207,32 +167,12 @@ public class RazorpayPaymentResource {
             if (!PaymentCrypto.verify(RazorpayClient.webhookSecret(), raw, signature))
                 return Response.status(401).build();
             JsonNode event = RazorpayClient.JSON.readTree(raw);
+            System.out.println(event);
             String type = event.path("event").asText();
-            if (Set.of("payment_link.paid", "payment_link.partially_paid", "payment_link.expired", "payment_link.cancelled").contains(type)) {
+            if (Set.of("payment_link.paid", "payment_link.expired", "payment_link.cancelled").contains(type)) {
                 PaymentLinkService.signedEvent(configId, event, eventId == null ? PaymentCrypto.hash(new String(raw, StandardCharsets.UTF_8)) : eventId);
                 return Response.ok(Map.of("received", true)).build();
             }
-            if (!Set.of("payment.captured", "payment.failed", "order.paid").contains(type))
-                return Response.ok(Map.of("received", true)).build();
-            JsonNode p = event.path("payload").path("payment").path("entity");
-            String order = p.path("order_id").asText();
-            if (order.isBlank()) return Response.status(400).build();
-            PaymentService.Checkout checkout = null;
-            try (Connection c = DatabaseConnection.getConnection(); PreparedStatement s = c.prepareStatement("SELECT * FROM payment_request WHERE config_id=? AND gateway_order_id=?")) {
-                s.setLong(1, configId);
-                s.setString(2, order);
-                try (ResultSet r = s.executeQuery()) {
-                    if (r.next()) checkout = PaymentService.read(r);
-                }
-            }
-            if (checkout == null) {
-                // A native link's order may not be known until the next link fetch; the background reconciler handles it.
-                return Response.ok(Map.of("received", true, "reconciliation", "pending")).build();
-            }
-            String payment = RazorpayClient.text(p, "id");
-            if (!payment.matches("pay_[A-Za-z0-9]+")) return Response.status(400).build();
-            // Raw-body HMAC authenticates the provider payload. Avoid HTTP calls in the webhook's five-second window.
-            PaymentService.process(checkout, p, configId, eventId == null ? PaymentCrypto.hash(new String(raw, StandardCharsets.UTF_8)) : eventId);
             return Response.ok(Map.of("received", true)).build();
         } catch (Exception e) {
             LOG.warning("Razorpay webhook processing failed: " + e.getClass().getSimpleName());

@@ -10,11 +10,11 @@ import static org.junit.jupiter.api.Assertions.*;
 class PaymentVerificationTest {
     private final Instant cutoff=Instant.parse("2026-10-10T10:00:00Z");
     private PaymentService.Checkout checkout(String status) {
-        return new PaymentService.Checkout(UUID.randomUUID(),1,1,3400,60,cutoff,cutoff.plusSeconds(PaymentService.PAYMENT_WINDOW_SECONDS),"order_test",status);
+        return new PaymentService.Checkout(UUID.randomUUID(),1,1,3400,60,cutoff,cutoff.plusSeconds(PaymentService.PAYMENT_WINDOW_SECONDS),status);
     }
     private ObjectNode payment() {
         ObjectNode p=RazorpayClient.JSON.createObjectNode();
-        p.put("id","pay_test").put("order_id","order_test").put("amount",3400).put("currency","INR")
+        p.put("id","pay_test").put("amount",3400).put("currency","INR")
                 .put("status","captured").put("captured",true).put("amount_refunded",0).put("created_at",cutoff.getEpochSecond()+30);
         return p;
     }
@@ -37,11 +37,10 @@ class PaymentVerificationTest {
         p.put("status","captured");
         assertEquals("PENDING",PaymentService.disposition(checkout("PENDING"),p,false));
     }
-    @Test void mismatchedOrderAmountCurrencyOrRefundNeedsReview() {
-        for(String field:new String[]{"order_id","amount","currency","amount_refunded"}) {
+    @Test void paymentMustMatchAmountCurrencyAndRefundState() {
+        for(String field:new String[]{"amount","currency","amount_refunded"}) {
             ObjectNode p=payment();
             switch(field) {
-                case "order_id"->p.put(field,"order_other");
                 case "amount"->p.put(field,3456);
                 case "currency"->p.put(field,"USD");
                 default->p.put(field,100);

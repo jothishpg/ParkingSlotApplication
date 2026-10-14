@@ -45,18 +45,16 @@ public final class PaymentLinkService {
         String id = RazorpayClient.text(link, "id"), url = RazorpayClient.text(link, "short_url");
         if (!id.matches("plink_[A-Za-z0-9]+") || !url.startsWith("https://") || !matches(checkout, link) || link.path("expire_by").asLong() <= 0)
             throw new IllegalStateException("Payment link details do not match this request. Reconcile before collecting again.");
-        String order = link.path("order_id").asText();
         try (Connection c = DatabaseConnection.getConnection()) {
             c.setAutoCommit(false);
             try (PreparedStatement s = c.prepareStatement("UPDATE payment_request SET gateway_payment_link_id=?,payment_link_url=?,"
-                    + "expires_at=?,gateway_order_id=COALESCE(gateway_order_id,?),status=CASE WHEN status='CREATING' THEN 'PENDING' ELSE status END "
+                    + "expires_at=?,status=CASE WHEN status='CREATING' THEN 'PENDING' ELSE status END "
                     + "WHERE request_id=? AND (gateway_payment_link_id IS NULL OR gateway_payment_link_id=?)")) {
                 s.setString(1, id);
                 s.setString(2, url);
                 s.setTimestamp(3, Timestamp.from(Instant.ofEpochSecond(link.path("expire_by").asLong())));
-                s.setString(4, order.matches("order_[A-Za-z0-9]+") ? order : null);
-                s.setObject(5, request);
-                s.setString(6, id);
+                s.setObject(4, request);
+                s.setString(5, id);
                 if (s.executeUpdate() != 1)
                     throw new IllegalStateException("Conflicting payment link. Ask an administrator to reconcile.");
                 PaymentMessaging.enqueue(c, request, "LINK", "LINK");
@@ -65,19 +63,6 @@ public final class PaymentLinkService {
                 c.rollback();
                 throw e;
             }
-        }
-    }
-
-    private static void bindOrder(UUID id, String order) throws Exception {
-        if (order == null || !order.matches("order_[A-Za-z0-9]+"))
-            throw new IllegalArgumentException("Invalid provider order.");
-        try (Connection c = DatabaseConnection.getConnection(); PreparedStatement s = c.prepareStatement(
-                "UPDATE payment_request SET gateway_order_id=? WHERE request_id=? AND (gateway_order_id IS NULL OR gateway_order_id=?)")) {
-            s.setString(1, order);
-            s.setObject(2, id);
-            s.setString(3, order);
-            if (s.executeUpdate() != 1)
-                throw new IllegalStateException("Payment order mismatch. Reconciliation required.");
         }
     }
 
@@ -106,30 +91,24 @@ public final class PaymentLinkService {
         if (!linkId.equals(link.path("id").asText()) || !matches(c, link))
             throw new IllegalStateException("Unexpected payment link details.");
         String result = c.status();
-        String order = link.path("order_id").asText();
-        if (order.matches("order_[A-Za-z0-9]+")) bindOrder(id, order);
-        c = PaymentService.get(id);
         boolean authorized = false;
-        if (c.order() != null) {
-            JsonNode payments = RazorpayClient.api("orders/" + c.order() + "/payments", null, config.authorization());
-            for (JsonNode payment : payments.path("items")) {
-                authorized |= payment.path("status").asText().equals("authorized");
-                String processed = PaymentService.process(c, payment, null, null);
-                if (processed.equals("COMPLETED") || processed.equals("REVIEW")) result = processed;
-            }
-        } else {
-            // Some link responses expose only captured payment IDs, without order_id.
-            for (JsonNode item : link.path("payments")) {
-                String paymentId = item.path("payment_id").asText();
-                if (!paymentId.matches("pay_[A-Za-z0-9]+")) continue;
-                JsonNode payment = RazorpayClient.api("payments/" + paymentId, null, config.authorization());
-                if (!paymentId.equals(payment.path("id").asText()))
-                    throw new IllegalStateException("Unexpected provider payment response.");
-                bindOrder(id, payment.path("order_id").asText());
-                result = PaymentService.process(PaymentService.get(id), payment, null, null);
-            }
+        boolean foundPayment = false;
+        for (JsonNode item : link.path("payments")) {
+            String paymentId = item.path("payment_id").asText();
+            if (!paymentId.matches("pay_[A-Za-z0-9]+"))
+                throw new IllegalStateException("Unexpected payment details on the payment link.");
+            JsonNode payment = RazorpayClient.api("payments/" + paymentId, null, config.authorization());
+            if (!paymentId.equals(payment.path("id").asText())
+                    || (payment.hasNonNull("payment_link_id") && !linkId.equals(payment.path("payment_link_id").asText())))
+                throw new IllegalStateException("Unexpected provider payment response.");
+            foundPayment = true;
+            authorized |= payment.path("status").asText().equals("authorized");
+            String processed = PaymentService.process(PaymentService.get(id), payment, null, null);
+            if (processed.equals("COMPLETED") || processed.equals("REVIEW")) result = processed;
         }
         if (result.equals("COMPLETED") || result.equals("REVIEW")) return result;
+        if (link.path("status").asText().equals("paid") && !foundPayment)
+            throw new IllegalStateException("Razorpay reports this link as paid, but has not returned its payment details.");
         if (!authorized && (link.path("status").asText().equals("expired") || link.path("status").asText().equals("cancelled"))) {
             expire(id);
             return PaymentService.get(id).status();
@@ -196,9 +175,6 @@ public final class PaymentLinkService {
         if (known == null) store(id, link);
         JsonNode payment = event.path("payload").path("payment").path("entity");
         if (!payment.isMissingNode() && !payment.isNull() && payment.has("id")) {
-            if (link.hasNonNull("order_id") && !link.path("order_id").asText().equals(payment.path("order_id").asText()))
-                throw new IllegalArgumentException("Link and payment order do not match.");
-            bindOrder(id, payment.path("order_id").asText());
             PaymentService.process(PaymentService.get(id), payment, config, eventId);
         } else if (link.path("amount_paid").asLong() == 0
                 && (event.path("event").asText().equals("payment_link.expired") || event.path("event").asText().equals("payment_link.cancelled")))

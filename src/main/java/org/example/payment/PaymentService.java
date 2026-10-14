@@ -7,8 +7,8 @@ import org.example.config.DatabaseConnection;
 import java.math.BigDecimal;
 import java.sql.*;
 import java.time.Instant;
-import java.util.Map;
 import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 public final class PaymentService {
@@ -19,13 +19,13 @@ public final class PaymentService {
     }
 
     public record Checkout(UUID id, long booking, long config, long paise, long minutes, Instant cutoff,
-                           Instant expires, String order, String status) {
+                           Instant expires, String status) {
     }
 
     public static Checkout read(ResultSet r) throws SQLException {
         return new Checkout(r.getObject("request_id", UUID.class), r.getLong("booking_id"), r.getLong("config_id"),
                 r.getLong("amount_paise"), r.getLong("duration_minutes"), r.getTimestamp("pricing_cutoff").toInstant(),
-                r.getTimestamp("expires_at").toInstant(), r.getString("gateway_order_id"), r.getString("status"));
+                r.getTimestamp("expires_at").toInstant(), r.getString("status"));
     }
 
     public static Checkout get(UUID id) throws Exception {
@@ -68,19 +68,7 @@ public final class PaymentService {
                                 c.commit();
                                 return previous;
                             }
-                            // Resolve the earlier request outside this transaction before collecting again.
-                            String previousLink = r.getString("gateway_payment_link_id");
-                            if (previousLink != null)
-                                throw new IllegalStateException("The previous payment link expired. Check payment status before collecting again.");
-                            JsonNode payments = RazorpayClient.api("orders/" + previous.order + "/payments", null, MerchantConfig.load(previous.config).authorization());
-                            for (JsonNode p : payments.path("items")) {
-                                if (p.path("status").asText().equals("captured") || p.path("status").asText().equals("authorized"))
-                                    throw new IllegalStateException("An earlier payment is awaiting reconciliation. Check payment status before retrying.");
-                            }
-                            try (PreparedStatement u = c.prepareStatement("UPDATE payment_request SET status='EXPIRED' WHERE request_id=?")) {
-                                u.setObject(1, previous.id);
-                                u.executeUpdate();
-                            }
+                            throw new IllegalStateException("The previous payment link expired or is unconfirmed. Reconcile payment status before collecting again.");
                         }
                     }
                 }
@@ -106,7 +94,7 @@ public final class PaymentService {
                 }
                 if ((sms || whatsapp) && (phone == null || !phone.matches("\\d{10}")))
                     throw new IllegalArgumentException("A valid 10-digit customer phone number is required for messages.");
-                checkout = new Checkout(UUID.randomUUID(), booking, config.id(), paise, minutes, cutoff, cutoff.plusSeconds(PAYMENT_WINDOW_SECONDS), null, "CREATING");
+                checkout = new Checkout(UUID.randomUUID(), booking, config.id(), paise, minutes, cutoff, cutoff.plusSeconds(PAYMENT_WINDOW_SECONDS), "CREATING");
                 try (PreparedStatement s = c.prepareStatement("INSERT INTO payment_request(request_id,booking_id,config_id,initiated_by,amount_paise,pricing_cutoff,duration_minutes,expires_at,"
                         + "customer_phone,sms_consent,whatsapp_consent) VALUES (?,?,?,?,?,?,?,?,?,?,?)")) {
                     s.setObject(1, checkout.id);
@@ -166,20 +154,6 @@ public final class PaymentService {
 
     static Map<String, Boolean> paymentLinkNotifications() {
         return Map.of("sms", true, "email", false);
-    }
-
-    public static String verify(UUID request, String order, String payment, String signature) throws Exception {
-        if (payment == null || !payment.matches("pay_[A-Za-z0-9]+"))
-            throw new IllegalArgumentException("Invalid payment ID.");
-        Checkout checkout = get(request);
-        MerchantConfig config = MerchantConfig.load(checkout.config);
-        if (!java.util.Objects.equals(checkout.order, order) || !PaymentCrypto.verify(config.secret(),
-                (checkout.order + "|" + payment).getBytes(java.nio.charset.StandardCharsets.UTF_8), signature))
-            throw new IllegalArgumentException("Payment signature verification failed.");
-        JsonNode provider = RazorpayClient.api("payments/" + payment, null, config.authorization());
-        if (!payment.equals(provider.path("id").asText()))
-            throw new IllegalArgumentException("Unexpected payment response.");
-        return process(checkout, provider, null, null);
     }
 
     public static String process(Checkout checkout, JsonNode provider, Long eventConfig, String eventId) throws Exception {
@@ -304,7 +278,7 @@ public final class PaymentService {
     }
 
     public static boolean matches(Checkout c, JsonNode p) {
-        return c.order != null && c.order.equals(p.path("order_id").asText()) && c.paise == p.path("amount").asLong(-1)
+        return c.paise == p.path("amount").asLong(-1)
                 && p.path("currency").asText().equals("INR") && p.path("amount_refunded").asLong() == 0;
     }
 

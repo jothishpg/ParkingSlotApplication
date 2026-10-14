@@ -210,11 +210,9 @@ role-protected. The status/verification/event routes return JSON.
 | `GET /payments/razorpay/checkout/{id}` | Path: `id` (payment request UUID) | `TICKET_ASSIGNER`; shows staff-side checkout/payment status for a request. |
 | `GET /payments/razorpay/customer/{id}` | Path: `id`; Query: `token` | Public; authorizes a customer payment URL and renders the Razorpay payment page. |
 | `GET /payments/razorpay/payment-link/{id}/callback` | Path: `id`; Query: `razorpay_payment_link_id`, `razorpay_payment_link_reference_id`, `razorpay_payment_link_status`, `razorpay_payment_id`, `razorpay_signature` | Public Razorpay redirect. Verifies signature and reconciles with Razorpay; the redirect alone does not mark payment complete. |
-| `POST /payments/razorpay/checkout/{id}/verify` | Path: `id`; Form: `razorpay_order_id`, `razorpay_payment_id`, `razorpay_signature` | `TICKET_ASSIGNER`; verifies checkout signature and provider payment; JSON status response. |
 | `GET /payments/razorpay/checkout/{id}/status` | Path: `id` | `TICKET_ASSIGNER` or `ADMIN`; reconciles/checks payment status; JSON `{ "status": "..." }`. |
 | `POST /payments/razorpay/checkout/{id}/event` | Path: `id`; Form: `event` | `TICKET_ASSIGNER`; records a browser checkout event such as close/client error; JSON `{ "received": true }`. |
 | `GET /payments/razorpay/customer/{id}/status` | Path: `id`; Query: `token` | Public with valid token; checks customer payment status; JSON response. |
-| `POST /payments/razorpay/customer/{id}/verify` | Path: `id`; Query: `token`; Form: `razorpay_order_id`, `razorpay_payment_id`, `razorpay_signature` | Public with valid token; verifies payment and returns JSON status. |
 | `POST /payments/razorpay/customer/{id}/event` | Path: `id`; Query: `token`; Form: `event` | Public with valid token; records browser checkout event; JSON response. |
 | `POST /payments/razorpay/webhook/{configId}` | Path: `configId`; JSON body (provider event); Headers: `X-Razorpay-Signature`, optional `X-Razorpay-Event-Id` | Public provider webhook. Verifies the raw-body HMAC and handles captured/failed/order-paid and payment-link events. Body limit is 256 KiB. |
 
@@ -298,12 +296,11 @@ the configured Key ID/secret.
 
 | Razorpay request | Parameters/body | Use |
 |---|---|---|
-| `GET /orders?count=1` | Basic auth; `count=1` | Confirms the admin-supplied keys can call Razorpay. |
+| `GET /payment_links?count=1` | Basic auth; `count=1` | Confirms the admin-supplied keys can access the current payment-link API. |
 | `POST /payment_links` | JSON: `amount` (paise), `currency=INR`, `accept_partial=false`, `reference_id` (payment request UUID), `description`, `expire_by`, `notify` (`sms=true`, `email=false`), `reminder_enable=false`, optional `customer.contact`; callback URL and `callback_method=get` | Creates the customer payment link and freezes the booking amount until expiry. |
 | `GET /payment_links?reference_id={id}` | `reference_id` is the request UUID | Recovers a link if the create request timed out before its response was stored. |
-| `GET /payment_links/{id}` | Payment-link ID | Retrieves authoritative payment-link state for reconciliation. |
-| `GET /orders?receipt={id}&count=100` | Request UUID as receipt, `count=100` | Recovers/checks an order for reconciliation. |
-| `GET /orders/{orderId}/payments` | Razorpay order ID | Finds authorized/captured/failed payments for a request. |
+| `GET /payment_links/{id}` | Payment-link ID | Retrieves authoritative payment-link state and attached payments for reconciliation. |
+| `GET /payments/{id}` | Payment ID from the link response | Retrieves payment status and details for reconciliation. |
 | `GET /payments/{paymentId}` | Razorpay payment ID | Retrieves payment details before verification/reconciliation. |
 | `POST /payment_links/{id}/notify_by/sms` | Empty JSON body; Basic auth | Requests Razorpay to send an SMS payment-link notification. |
 

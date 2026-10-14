@@ -45,8 +45,8 @@ public class RazorpaySetupResource {
                 <label>Key Secret <input type="password" name="keySecret" required autocomplete="new-password"></label><br><br>
                 <button>Save Razorpay keys</button></form>
                 <p>Use both keys from the same Razorpay test or live account. The Key Secret is stored encrypted.</p>
-                <p>Enable automatic payment capture. For webhooks, select payment.captured, payment.failed,
-                order.paid, payment_link.paid, payment_link.expired and payment_link.cancelled.
+                <p>Enable automatic payment capture. For webhooks, select payment_link.paid,
+                payment_link.expired and payment_link.cancelled.
                 Use the webhook signing secret configured on the server.</p>
                 <a href="%s/api/admin">Admin Dashboard</a>
                 """.formatted(html(status), base, base)).header("Cache-Control", "no-store").build();
@@ -65,7 +65,7 @@ public class RazorpaySetupResource {
             }
             String authorization = "Basic " + Base64.getEncoder().encodeToString(
                     (keyId + ":" + keySecret).getBytes(StandardCharsets.UTF_8));
-            RazorpayClient.api("orders?count=1", null, authorization);
+            RazorpayClient.api("payment_links?count=1", null, authorization);
             MerchantConfig.save(keyId, keySecret, Long.parseLong(security.getUserPrincipal().getName()));
             return Response.seeOther(URI.create(base(request) + "/api/admin/razorpay-setup")).build();
         } catch (Exception exception) {

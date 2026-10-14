@@ -67,7 +67,7 @@ FROM razorpay_config
 WHERE active = TRUE;
 ```
 
-Subscribe to `payment.captured`, `payment.failed`, `order.paid`, `payment_link.paid`, `payment_link.expired`, and `payment_link.cancelled`, using exactly the server's `RAZORPAY_WEBHOOK_SECRET` value. For OAuth also subscribe to `account.app.authorization_revoked` through the Partner application's webhook configuration. That event disables new payments for the matching merchant.
+Subscribe to `payment_link.paid`, `payment_link.expired`, and `payment_link.cancelled`, using exactly the server's `RAZORPAY_WEBHOOK_SECRET` value. For OAuth also subscribe to `account.app.authorization_revoked` through the Partner application's webhook configuration. That event disables new payments for the matching merchant.
 
 Each business endpoint processes its own database/configuration. A shared Partner webhook endpoint serving many business deployments needs a merchant-to-deployment router; this application does not contain such a router. Configure webhook delivery to the relevant business endpoint and test that merchant's payment events reach it before going live.
 
@@ -78,12 +78,12 @@ Webhook signatures are checked against the raw request bytes. Signed events can 
 * Cash uses the existing immediate successful-checkout transaction.
 * Online Pay calculates the charge on the server and freezes the charge/duration until the returned provider deadline. Repeated clicks reuse the open request.
 * Razorpay displays the merchant's enabled payment methods on the assigner's device. The application never handles customer payment credentials.
-* New payments use native Razorpay links with a 15-minute expiry plus a 30-second request-transit allowance to meet the provider minimum at receipt. Existing order-based requests keep their original saved deadlines.
+* New payments use native Razorpay links with a 15-minute expiry plus a 30-second request-transit allowance to meet the provider minimum at receipt.
 * A captured payment whose provider `created_at` falls inside the request window can complete later through a delayed callback/webhook. This preserves a legitimate payment started before expiry. Provider creation timestamps have second precision.
 * A captured payment created outside that window, with mismatched details, refunded funds, or after another checkout is recorded as `REVIEW`. It does not independently complete checkout or free the slot. Refunds/review resolution require the administrator's investigation in Razorpay; automatic refunds are not implemented.
 * Only a matching, captured, unrefunded payment can create the final `payment` and `duration_amount` records and release the slot. These changes commit together under a booking lock.
-* Cash/new payments are blocked while an online request is CREATING, PENDING or REVIEW. Checking status/reconciling an expired unpaid order makes it EXPIRED so a new charge or cash collection can proceed. A network error during order creation is retained for admin recovery rather than retried blindly.
-* **Payment Reconciliation**, background polling and signed webhooks check native links/orders/payments. Creation timeouts are recovered by link reference, or by receipt for older orders. If no matching entity is found, check Razorpay before manual resolution.
+* Cash/new payments are blocked while an online request is CREATING, PENDING or REVIEW. Reconciling an expired unpaid link makes it EXPIRED so a new charge or cash collection can proceed. A network error during link creation is retained for admin recovery rather than retried blindly.
+* **Payment Reconciliation**, background polling and signed webhooks check native links and their payments. Creation timeouts are recovered by link reference. If no matching entity is found, check Razorpay before manual resolution. The current reconciler does not recover legacy order-based requests; resolve any such outstanding request manually before collecting again.
 
 Review captured attempts, including extra payments on already completed requests:
 
@@ -104,7 +104,7 @@ Payment links and unsuccessful/pending statuses reuse the assigned booking templ
 
 ## Validation before live use
 
-`mvn test` covers an independent HMAC signature vector/tampering, payment status, exact order/amount/currency matching, refunded payments, 15-minute boundaries, delayed events and payments after a completed booking. Database and real Razorpay tests require deployment credentials and were not run locally.
+`mvn test` covers an independent HMAC signature vector/tampering, payment status, native-link payment amount/currency matching, refunded payments, 15-minute boundaries, delayed events and payments after a completed booking. Database and real Razorpay tests require deployment credentials and were not run locally.
 
 In test mode verify success, payment failure/cancellation, double clicks, duplicate webhooks, browser closure after payment, expiry/retry, cash after an unpaid request is reconciled, OAuth reconnect/revocation and WhatsApp confirmation. Check that unsuccessful payments keep the slot occupied and never create a successful checkout record. Move to live mode only after the database migration, merchant capture settings and actual webhook delivery are verified.
 
