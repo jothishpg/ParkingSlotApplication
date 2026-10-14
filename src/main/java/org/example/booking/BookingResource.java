@@ -385,7 +385,7 @@ public class BookingResource {
                 PaymentService.Checkout checkout = PaymentService.start(bookingId, currentUserId(securityContext), true, true);
                 return redirect(RazorpaySetupResource.base(request) + "/api/payments/razorpay/checkout/" + checkout.id());
             } catch (Exception exception) {
-                LOGGER.log(Level.WARNING, "Unable to initiate Razorpay checkout: " + exception.getClass().getSimpleName());
+                LOGGER.log(Level.WARNING, "Unable to initiate Razorpay checkout.", exception);
                 return error(base, exception instanceof IllegalArgumentException || exception instanceof IllegalStateException
                         ? exception.getMessage() : "Unable to initiate payment. Check payment status before collecting again.");
             }

@@ -39,76 +39,7 @@ public class RazorpayPaymentResource {
     private Response renderCheckout(UUID id, HttpServletRequest request) {
         try {
             PaymentService.Checkout c = PaymentService.get(id);
-            MerchantConfig config = MerchantConfig.load(c.config());
-            if (PaymentLinkService.linkId(id) != null) return nativeLinkPage(c, request);
-            if (c.order() == null)
-                return Response.status(409).entity("<p>This payment window is closed. Check payment status or search the vehicle again.</p>").build();
-            String base = RazorpaySetupResource.base(request);
-            String customerLink = "";
-            try (Connection db = DatabaseConnection.getConnection(); PreparedStatement s = db.prepareStatement("SELECT payment_link_url FROM payment_request WHERE request_id=?")) {
-                s.setObject(1, id);
-                try (ResultSet r = s.executeQuery()) {
-                    if (r.next()) customerLink = Objects.toString(r.getString(1), "");
-                }
-            }
-            Map<String, Object> options = new LinkedHashMap<>();
-            options.put("key", config.publicKey());
-            options.put("amount", c.paise());
-            options.put("currency", "INR");
-            options.put("name", "Parking payment");
-            options.put("description", "Booking #" + c.booking());
-            options.put("order_id", c.order());
-            options.put("timeout", Math.max(1, c.expires().getEpochSecond() - Instant.now().getEpochSecond()));
-            String json = RazorpayClient.JSON.writeValueAsString(options).replace("<", "\\u003c");
-            String endpoint = RazorpayClient.JSON.writeValueAsString(base + "/api/payments/razorpay/checkout/" + id).replace("<", "\\u003c");
-            return Response.ok("""
-                            <!doctype html><meta charset="utf-8"><title>Parking payment</title>
-                            <h1>Parking payment</h1><p>Amount: INR %s</p><p id="message">Payment is valid until the displayed request deadline.</p>
-                            <button id="pay">Pay with Razorpay</button><button id="check">Check payment status</button>
-                            %s
-                            <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-                            <script>
-                            const options=%s, endpoint=%s, expires=%d, initial='%s';
-                            const message=document.getElementById('message'), button=document.getElementById('pay');
-                            let busy=false, gateway;
-                            function show(s) {
-                              message.textContent=s==='COMPLETED'||s==='PAID'?'Payment successful. Checkout completed.':
-                                s==='REVIEW'?'Payment needs review. Ask the administrator to check before collecting again.':
-                                s==='FAILED'?'Payment failed. Retry within the remaining payment window.':
-                                s==='EXPIRED'?'Payment window expired. Check status before starting again.':'Payment is pending. Check status if you have already paid.';
-                              if(s==='COMPLETED'||s==='PAID'||s==='REVIEW') button.disabled=true;
-                            }
-                            async function check() {
-                              try { const response=await fetch(endpoint+'/status',{cache:'no-store'});const data=await response.json();
-                                if(!response.ok) throw Error(data.error||'Unable to check payment status.');show(data.status);
-                              } catch(e) { message.textContent=e.message; }
-                            }
-                            options.handler=async function(result) {
-                              try {
-                                const data=new URLSearchParams(result);
-                                const response=await fetch(endpoint+'/verify',{method:'POST',body:data});
-                                const status=await response.json();if(!response.ok) throw Error(status.error||'Unable to verify payment. Use Check payment status.');
-                                show(status.status);
-                              } catch(e) {message.textContent=e.message;signal('CLIENT_ERROR');} finally {busy=false;}
-                            };
-                            async function signal(event) {
-                              try {await fetch(endpoint+'/event',{method:'POST',body:new URLSearchParams({event})});}catch(e){}
-                            }
-                            options.modal={ondismiss:function(){busy=false;check().then(()=>signal('CLOSED'));}};
-                            button.onclick=function(){if(busy||Date.now()>=expires)return;busy=true;
-                              try {gateway=new Razorpay(options);gateway.on('payment.failed',function(){busy=false;check();});gateway.open();}
-                              catch(e){busy=false;message.textContent='Unable to open Razorpay. Check your connection and retry.';signal('CLIENT_ERROR');}};
-                            document.getElementById('check').onclick=check;
-                            const timer=setInterval(function(){if(Date.now()>=expires){button.disabled=true;if(gateway)gateway.close();clearInterval(timer);check();}},1000);
-                            if(initial!=='PENDING'||Date.now()>=expires) button.disabled=true;
-                            show(initial);
-                            </script>
-                            """.formatted(java.math.BigDecimal.valueOf(c.paise(), 2),
-                            (customerLink.isBlank() ? "" : "<p>Customer payment link: <a href=\"" + RazorpaySetupResource.html(customerLink) + "\">" + RazorpaySetupResource.html(customerLink) + "</a></p><p>SMS and WhatsApp link messages are queued automatically.</p>")
-                                    + "<a href=\"" + RazorpaySetupResource.html(base) + "/api/booking/checkout\">Back to checkout</a>",
-                            json, endpoint, c.expires().toEpochMilli(), c.status()))
-                    .header("Cache-Control", "no-store")
-                    .header("Referrer-Policy", "no-referrer").header("X-Robots-Tag", "noindex, nofollow").build();
+            return nativeLinkPage(c, request);
         } catch (Exception e) {
             return error(e);
         }
@@ -185,20 +116,6 @@ public class RazorpayPaymentResource {
         } catch (Exception e) {
             if (!(e instanceof IllegalArgumentException)) PaymentMessaging.serverError(id);
             return Response.status(400).entity("<p>Payment could not be confirmed. Ask parking staff to check the status before paying again.</p>").header("Cache-Control", "no-store").build();
-        }
-    }
-
-    @POST
-    @Path("checkout/{id}/verify")
-    @RolesAllowed("TICKET_ASSIGNER")
-    @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
-    @Produces(MediaType.APPLICATION_JSON)
-    public Response verify(@PathParam("id") UUID id, @FormParam("razorpay_order_id") String order,
-                           @FormParam("razorpay_payment_id") String payment, @FormParam("razorpay_signature") String signature) {
-        try {
-            return Response.ok(Map.of("status", PaymentService.verify(id, order, payment, signature))).build();
-        } catch (Exception e) {
-            return error(e);
         }
     }
 

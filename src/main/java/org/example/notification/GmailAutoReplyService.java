@@ -42,7 +42,7 @@ public final class GmailAutoReplyService {
             if (addresses.length != 1) return null;
             addresses[0].validate();
             String recipient = addresses[0].getAddress();
-            if (recipient == null || !recipient.contains("@") || recipient.equalsIgnoreCase(mailbox)) return null;
+            if (recipient == null || recipient.equalsIgnoreCase(mailbox)) return null;
             String local = recipient.substring(0, recipient.indexOf('@')).toLowerCase(Locale.ROOT);
             if (local.matches(".*(no[._-]?reply|do[._-]?not[._-]?reply|mailer-daemon|postmaster).*")) return null;
             String subject = headers.getOrDefault("subject", "Your email").replaceAll("[\\p{Cntrl}]", " ");
@@ -100,18 +100,18 @@ public final class GmailAutoReplyService {
         savePage(connection, mailbox.sender(), inbox.has("nextPageToken") ? inbox.path("nextPageToken").asText() : null);
     }
 
-    private static void processMessage(Connection connection, Mailbox mailbox, String messageId) throws Exception {
-        if (!messageId.matches("[A-Za-z0-9_-]+") || alreadyProcessed(connection, mailbox.sender(), messageId)) return;
+    private static void processMessage(Connection connection, Mailbox mailbox, String gmailApiMessageId) throws Exception {
+        if (!gmailApiMessageId.matches("[A-Za-z0-9_-]+") || alreadyProcessed(connection, mailbox.sender(), gmailApiMessageId)) return;
         JsonNode message;
         try {
-            message = GmailEmailService.inboxMetadata(mailbox.sender(), "messages/" + messageId + "?format=metadata");
+            message = GmailEmailService.inboxMetadata(mailbox.sender(), "messages/" + gmailApiMessageId + "?format=metadata");
         } catch (GmailEmailService.EmailSetupException exception) {
             if (exception.getMessage().contains("HTTP 404")) return;
             throw exception;
         }
         Reply reply = message.path("internalDate").asLong(0) < mailbox.startedAt().toEpochMilli()
                 ? null : replyFor(message, mailbox.sender());
-        if (!claimMessage(connection, mailbox.sender(), messageId, reply == null ? "SKIPPED" : "SENDING")) return;
+        if (!claimMessage(connection, mailbox.sender(), gmailApiMessageId, reply == null ? "SKIPPED" : "SENDING")) return;
         if (reply == null) return;
 
         String error = null;
@@ -121,7 +121,7 @@ public final class GmailAutoReplyService {
             // A timeout can occur after Gmail accepted the mail. Record uncertainty rather than sending twice.
             error = exception.getClass().getSimpleName();
         }
-        recordResult(connection, mailbox.sender(), messageId, error);
+        recordResult(connection, mailbox.sender(), gmailApiMessageId, error);
     }
 
     private static boolean alreadyProcessed(Connection connection, String sender, String messageId) throws SQLException {
