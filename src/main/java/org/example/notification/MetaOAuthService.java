@@ -8,7 +8,6 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -377,16 +376,15 @@ public final class MetaOAuthService {
         return findTemplate(messageTemplates(credentials), templateId);
     }
 
-    public static void createMessageTemplate(String name, String category, String language,
+    public static void createMessageTemplate(String name, String language,
                                              String parameterFormat, String componentsJson)
             throws SQLException, IOException, InterruptedException, MetaApiException {
         validateTemplateName(name);
-        validateTemplateCategory(category);
         validateTemplateLanguage(language);
         JsonNode components = validateTemplateComponents(componentsJson);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("name", name);
-        payload.put("category", category);
+        payload.put("category", "UTILITY");
         payload.put("language", language);
         payload.put("components", components);
         if (parameterFormat != null && !parameterFormat.isBlank()) {
@@ -442,43 +440,6 @@ public final class MetaOAuthService {
         }
         graphDelete("/" + encodePath(credentials.wabaId()) + "/message_templates",
                 Map.of("name", name, "hsm_id", templateId), credentials.accessToken());
-    }
-
-    public static String uploadTemplateMedia(InputStream media, long contentLength,
-                                             String contentType)
-            throws SQLException, IOException, InterruptedException, MetaApiException {
-        if (media == null || contentType == null) {
-            throw new MetaApiException("Select a media file to upload.");
-        }
-        if (!Set.of("image/jpeg", "image/png").contains(contentType.toLowerCase())) {
-            throw new MetaApiException("Template header image examples support JPEG and PNG only.");
-        }
-        long maxBytes = 5L * 1024 * 1024;
-        if (contentLength < 1 || contentLength > maxBytes) {
-            throw new MetaApiException("The selected file is empty or exceeds the "
-                    + (maxBytes / (1024 * 1024)) + " MB limit for " + contentType + ".");
-        }
-        TemplateCredentials credentials = templateCredentials();
-        AppConfig config = requiredConfig();
-        URI sessionUri = URI.create(GRAPH_BASE + "/" + encodePath(config.appId())
-                + "/uploads" + queryString(Map.of("file_length",
-                Long.toString(contentLength), "file_type", contentType)));
-        HttpRequest sessionRequest = HttpRequest.newBuilder(sessionUri)
-                .header("Authorization", "Bearer " + credentials.accessToken())
-                .POST(HttpRequest.BodyPublishers.noBody())
-                .build();
-        JsonNode session = send(sessionRequest);
-        String uploadId = requiredText(session, "id");
-        URI uploadUri = URI.create(GRAPH_BASE + "/" + encodePath(uploadId));
-        HttpRequest.BodyPublisher stream = HttpRequest.BodyPublishers.fromPublisher(
-                HttpRequest.BodyPublishers.ofInputStream(() -> media), contentLength);
-        HttpRequest uploadRequest = HttpRequest.newBuilder(uploadUri)
-                .header("Authorization", "Bearer " + credentials.accessToken())
-                .header("file_offset", "0")
-                .header("Content-Type", "application/octet-stream")
-                .POST(stream)
-                .build();
-        return requiredText(send(uploadRequest), "h");
     }
 
     private static MessageTemplate messageTemplate(JsonNode item) throws MetaApiException {

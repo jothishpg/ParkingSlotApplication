@@ -163,11 +163,10 @@ Base route: `/admin/facebook-setup/templates`.
 | `GET /admin/facebook-setup/templates` | Query: optional `message` | Lists Meta templates, previews components, and shows notification-template assignments. |
 | `POST /admin/facebook-setup/templates/assign` | Form: `messageKey`, `templateId` (blank removes assignment) | Assigns or removes an approved compatible WhatsApp template for an application message. |
 | `GET /admin/facebook-setup/templates/new` | — | Displays the new-template editor with default component JSON. |
-| `POST /admin/facebook-setup/templates/create` | Form: `name`, `category`, `language`, optional `parameterFormat`, `components` (JSON) | Submits a WhatsApp template to Meta for review. Categories: `AUTHENTICATION`, `MARKETING`, `UTILITY`; parameter format: `POSITIONAL` or `NAMED`. |
+| `POST /admin/facebook-setup/templates/create` | Form: `name`, `language`, optional `parameterFormat`, `components` (JSON) | Submits a Utility-category WhatsApp template to Meta for review; category is fixed by the server. Parameter format: `POSITIONAL` or `NAMED`. |
 | `GET /admin/facebook-setup/templates/edit/{templateId}` | Path: `templateId` | Loads template details/components for editing. |
 | `POST /admin/facebook-setup/templates/edit` | Form: `templateId`, `category`, `parameterFormat`, optional `allowCategoryChange` (`true`), `components` (JSON) | Submits supported changes to an approved/rejected template for Meta review. |
 | `POST /admin/facebook-setup/templates/delete` | Form: `templateId`, `name` | Deletes that template language from Meta, unless currently assigned. |
-| `POST /admin/facebook-setup/templates/media` | Raw binary request body; Header: `Content-Type` (`image/jpeg` or `image/png`); request `Content-Length` | Uploads a header-image example (maximum 5 MiB) to Meta and returns JSON `{ "handle": "..." }`. |
 
 Assignment eligibility is checked against approval status and required body
 variable counts, and disallows header/button variables. OTP template selection

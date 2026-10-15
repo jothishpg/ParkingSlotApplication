@@ -1864,7 +1864,6 @@ Every path below is relative to the application's base URL. `GET` forms/status v
 | GET | `/admin/facebook-setup/templates/edit/{templateId}` | Edit editor |
 | POST | `/admin/facebook-setup/templates/edit` | Submit edits |
 | POST | `/admin/facebook-setup/templates/delete` | Delete selected variant |
-| POST | `/admin/facebook-setup/templates/media` | Header-example upload |
 | POST | `/admin/facebook-setup/templates/assign` | Booking/checkout assignment |
 | GET | `/admin/razorpay-setup` | Merchant status and setup form |
 | POST | `/admin/razorpay-setup/authorize` | Begin merchant OAuth |

@@ -6,8 +6,6 @@ import jakarta.annotation.security.RolesAllowed;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.ws.rs.FormParam;
 import jakarta.ws.rs.GET;
-import jakarta.ws.rs.Consumes;
-import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
@@ -15,13 +13,11 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.SecurityContext;
 import org.example.notification.MetaOAuthService;
 import org.example.notification.WhatsAppTemplateAssignments;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -116,33 +112,31 @@ public class WhatsAppTemplateResource {
     @Path("create")
     public Response create(
             @FormParam("name") String name,
-            @FormParam("category") String category,
             @FormParam("language") String language,
             @FormParam("parameterFormat") String parameterFormat,
             @FormParam("components") String components,
             @Context HttpServletRequest request) {
         try {
-            MetaOAuthService.createMessageTemplate(name, category, language,
-                    parameterFormat, components);
+            MetaOAuthService.createMessageTemplate(name, language, parameterFormat, components);
             return redirect(request, "Template submitted to Meta for review.");
         } catch (MetaOAuthService.MetaApiException exception) {
-            return editor(request, null, name, category, language, parameterFormat, components,
+            return editor(request, null, name, "UTILITY", language, parameterFormat, components,
                     exception.getMessage(), Response.Status.BAD_REQUEST);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            return editor(request, null, name, category, language, parameterFormat, components,
+            return editor(request, null, name, "UTILITY", language, parameterFormat, components,
                     "The Meta template request was interrupted. Try again.",
                     Response.Status.SERVICE_UNAVAILABLE);
         } catch (IOException | SQLException exception) {
             LOGGER.log(Level.WARNING, "Unable to create WhatsApp message template.", exception);
-            return editor(request, null, name, category, language, parameterFormat, components,
+            return editor(request, null, name, "UTILITY", language, parameterFormat, components,
                     "Unable to create the template. Check the database, encryption key, "
                             + "and employee system-user access.",
                     Response.Status.SERVICE_UNAVAILABLE);
         } catch (RuntimeException exception) {
             LOGGER.log(Level.SEVERE, "Unexpected error creating WhatsApp message template.",
                     exception);
-            return editor(request, null, name, category, language, parameterFormat, components,
+            return editor(request, null, name, "UTILITY", language, parameterFormat, components,
                     "The template could not be created due to an unexpected error.",
                     Response.Status.INTERNAL_SERVER_ERROR);
         }
@@ -243,37 +237,6 @@ public class WhatsAppTemplateResource {
             LOGGER.log(Level.SEVERE, "Unexpected error deleting WhatsApp message template.",
                     exception);
             return listError(request, "The template could not be deleted.",
-                    Response.Status.INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    @POST
-    @Path("media")
-    @Consumes(MediaType.WILDCARD)
-    public Response uploadMedia(@HeaderParam(HttpHeaders.CONTENT_TYPE) String contentType,
-                                @Context HttpServletRequest request,
-                                InputStream media) {
-        long contentLength = request.getContentLengthLong();
-        try (InputStream input = media) {
-            String handle = MetaOAuthService.uploadTemplateMedia(input, contentLength,
-                    contentType);
-            return Response.ok(JSON.createObjectNode().put("handle", handle))
-                    .type(MediaType.APPLICATION_JSON).build();
-        } catch (MetaOAuthService.MetaApiException exception) {
-            return jsonError(exception.getMessage(), Response.Status.BAD_REQUEST);
-        } catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            return jsonError("The Meta media upload was interrupted. Try again.",
-                    Response.Status.SERVICE_UNAVAILABLE);
-        } catch (IOException | SQLException exception) {
-            LOGGER.log(Level.WARNING, "Unable to upload WhatsApp template media.", exception);
-            return jsonError("Unable to upload the media example. Check the database, "
-                    + "encryption key, and employee system-user access.",
-                    Response.Status.SERVICE_UNAVAILABLE);
-        } catch (RuntimeException exception) {
-            LOGGER.log(Level.SEVERE, "Unexpected error uploading WhatsApp template media.",
-                    exception);
-            return jsonError("The media example could not be uploaded.",
                     Response.Status.INTERNAL_SERVER_ERROR);
         }
     }
@@ -565,15 +528,16 @@ public class WhatsAppTemplateResource {
                     .append(escape(defaultValue(templateName, "")))
                     .append("\"><p>Use lowercase letters, numbers, and underscores.</p>");
         }
-        content.append("<label for=\"category\">Category</label><br>")
-                .append("<select id=\"category\" name=\"category\" required>")
-                .append(option("AUTHENTICATION", category))
-                .append(option("MARKETING", category))
-                .append(option("UTILITY", category)).append("</select><br><br>");
         if (editing) {
+            content.append("<label for=\"category\">Category</label><br>")
+                    .append("<select id=\"category\" name=\"category\" required>")
+                    .append(option("AUTHENTICATION", category))
+                    .append(option("MARKETING", category))
+                    .append(option("UTILITY", category)).append("</select><br><br>");
             content.append("<label><input type=\"checkbox\" name=\"allowCategoryChange\" ")
                     .append("value=\"true\"> Allow Meta to reassign the category</label><br><br>");
         } else {
+            content.append("<p>Category: <strong>Utility</strong></p>");
             content.append("<label for=\"language\">Language code</label><br>")
                     .append("<input id=\"language\" name=\"language\" maxlength=\"20\" ")
                     .append("pattern=\"[A-Za-z]{2,3}(_[A-Za-z0-9]{2,8})?\" required value=\"")
@@ -586,17 +550,11 @@ public class WhatsAppTemplateResource {
                 .append(">Positional ({{1}}, {{2}})</option>")
                 .append("<option value=\"NAMED\"").append(selected("NAMED", parameterFormat))
                 .append(">Named ({{first_name}})</option></select><br><br>");
-        content.append("<p>Components support header text or media, body text and examples, "
-                + "footer, buttons, carousels, authentication and other Meta component types. "
+        content.append("<p>Components support header text, body text and examples, footer, "
+                + "and buttons. "
                 + "Use valid WhatsApp template component JSON; Meta validates policy and component "
                 + "rules when you submit.</p>")
                 .append("<label for=\"components\">Template components (JSON)</label><br>")
-                .append("<label for=\"mediaFile\">Upload a header image example (JPEG or PNG, maximum 5 MB)</label><br>")
-                .append("<input id=\"mediaFile\" type=\"file\" accept=\"image/jpeg,image/png\">")
-                .append("<button id=\"uploadMedia\" type=\"button\" data-upload-url=\"")
-                .append(escape(base(request)))
-                .append("/api/admin/facebook-setup/templates/media\">Upload and add to header</button>")
-                .append("<span id=\"uploadStatus\" role=\"status\" aria-live=\"polite\"></span><br><br>")
                 .append("<textarea id=\"components\" name=\"components\" rows=\"22\" ")
                 .append("maxlength=\"65536\" required>")
                 .append(escape(defaultValue(components, DEFAULT_COMPONENTS)))
@@ -626,23 +584,6 @@ public class WhatsAppTemplateResource {
                 .append("const b=document.createElement('span');b.textContent=button.text||button.type;")
                 .append("section.append(b)}}preview.append(section)}}catch(e){")
                 .append("preview.textContent='Preview unavailable: '+e.message}})}")
-                .append("const upload=document.getElementById('uploadMedia');")
-                .append("if(upload){upload.addEventListener('click',async()=>{")
-                .append("const file=document.getElementById('mediaFile').files[0];")
-                .append("const status=document.getElementById('uploadStatus');")
-                .append("if(!file){status.textContent=' Choose a file first.';return}")
-                .append("status.textContent=' Uploading…';upload.disabled=true;")
-                .append("try{const response=await fetch(upload.dataset.uploadUrl,{method:'POST',")
-                .append("headers:{'Content-Type':file.type},body:file});")
-                .append("const result=await response.json();if(!response.ok)throw new Error(result.error||'Upload failed');")
-                .append("const items=JSON.parse(editor.value);if(!Array.isArray(items))throw new Error('Components must be a JSON array');")
-                .append("let header=items.find(item=>String(item.type).toUpperCase()==='HEADER');")
-                .append("if(!header){header={type:'HEADER'};items.unshift(header)}")
-                .append("header.format='IMAGE';")
-                .append("header.example=header.example||{};header.example.header_handle=[result.handle];")
-                .append("editor.value=JSON.stringify(items,null,2);editor.dispatchEvent(new Event('input'));")
-                .append("status.textContent=' Media uploaded and added to the header example.'")
-                .append("}catch(e){status.textContent=' '+e.message}finally{upload.disabled=false}})}")
                 .append("</script>");
         return htmlResponse(request, editing ? "Edit WhatsApp Template"
                 : "Create WhatsApp Template", content.toString(), status);
@@ -702,11 +643,6 @@ public class WhatsAppTemplateResource {
             content.append("<p class=\"error\" role=\"alert\">")
                     .append(escape(error)).append("</p>");
         }
-    }
-
-    private Response jsonError(String message, Response.Status status) {
-        return Response.status(status).type(MediaType.APPLICATION_JSON)
-                .entity(JSON.createObjectNode().put("error", message)).build();
     }
 
     private Response redirect(HttpServletRequest request, String message) {
