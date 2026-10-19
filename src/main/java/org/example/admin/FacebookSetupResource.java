@@ -37,7 +37,6 @@ public class FacebookSetupResource {
     private static final String STATE_COOKIE = "META_FACEBOOK_SETUP_STATE";
     private static final String TEMP_COOKIE = "META_FACEBOOK_SETUP_TEMP";
     private static final long FLOW_TTL_SECONDS = 10 * 60;
-    private static final String REDIRECT_URI = setting("META_FACEBOOK_REDIRECT_URI");
     private static final String APP_BASE_URL = setting("APP_BASE_URL");
 
     @GET
@@ -82,7 +81,7 @@ public class FacebookSetupResource {
         } catch (SQLException | RuntimeException exception) {
             LOGGER.log(Level.SEVERE, "Unable to save validated Meta App credentials.", exception);
             return setupPage(request, getConfigSafely(),
-                    "Credentials could not be saved. Check the database and META_TOKEN_ENCRYPTION_KEY.",
+                    "Credentials could not be saved. Check the database and META_TOKEN_ENCRYPTION_KEY database setting.",
                     Response.Status.INTERNAL_SERVER_ERROR);
         }
     }
@@ -92,9 +91,10 @@ public class FacebookSetupResource {
     public Response authorize(
             @Context SecurityContext securityContext,
             @Context HttpServletRequest request) {
-        if (REDIRECT_URI == null) {
+        String redirectUri = redirectUri(request);
+        if (redirectUri == null) {
             return setupPage(request, getConfigSafely(),
-                    "Set META_FACEBOOK_REDIRECT_URI to this application's registered public HTTPS callback URL.",
+                    "Connect Facebook over HTTPS or configure APP_BASE_URL with this application's public HTTPS URL.",
                     Response.Status.INTERNAL_SERVER_ERROR);
         }
         try {
@@ -104,7 +104,7 @@ public class FacebookSetupResource {
             claims.put("purpose", "meta-facebook-setup");
             claims.put("admin_user_id", adminId);
             String state = JwtUtil.generate(claims, FLOW_TTL_SECONDS);
-            String authorizationUrl = MetaOAuthService.authorizationUrl(REDIRECT_URI, state);
+            String authorizationUrl = MetaOAuthService.authorizationUrl(redirectUri, state);
             NewCookie stateCookie = cookie(STATE_COOKIE, state, (int) FLOW_TTL_SECONDS);
             return Response.seeOther(URI.create(authorizationUrl)).cookie(stateCookie).build();
         } catch (MetaOAuthService.MetaApiException | SQLException | RuntimeException exception) {
@@ -125,6 +125,7 @@ public class FacebookSetupResource {
             @Context SecurityContext securityContext,
             @Context HttpServletRequest request) {
         NewCookie clearState = cookie(STATE_COOKIE, "", 0);
+        String redirectUri = redirectUri(request);
         Map<String, Object> claims = JwtUtil.verify(state);
         if (state == null || stateCookie == null || !state.equals(stateCookie)
                 || claims == null
@@ -141,13 +142,13 @@ public class FacebookSetupResource {
             return withCookies(setupPage(request, getConfigSafely(), message,
                     Response.Status.BAD_REQUEST), clearState, cookie(TEMP_COOKIE, "", 0));
         }
-        if (code == null || code.isBlank() || REDIRECT_URI == null) {
+        if (code == null || code.isBlank() || redirectUri == null) {
             return withCookies(setupPage(request, getConfigSafely(),
-                    "Meta did not return an authorization code, or the callback URL is not configured.",
+                    "Meta did not return an authorization code, or the callback URL could not be generated.",
                     Response.Status.BAD_REQUEST), clearState, cookie(TEMP_COOKIE, "", 0));
         }
         try {
-            String userToken = MetaOAuthService.exchangeTokenValue(code, REDIRECT_URI);
+            String userToken = MetaOAuthService.exchangeTokenValue(code, redirectUri);
             MetaOAuthService.validateUserToken(userToken);
             List<MetaOAuthService.Business> businesses = MetaOAuthService.businesses(userToken);
             if (businesses.isEmpty()) {
@@ -529,6 +530,24 @@ public class FacebookSetupResource {
 
     private String base(HttpServletRequest request) {
         return APP_BASE_URL == null ? request.getContextPath() : APP_BASE_URL;
+    }
+
+    private String redirectUri(HttpServletRequest request) {
+        if (APP_BASE_URL != null && !APP_BASE_URL.isBlank()) {
+            return APP_BASE_URL.replaceAll("/+$", "")
+                    + "/api/admin/facebook-setup/callback";
+        }
+        if (!request.isSecure()) {
+            return null;
+        }
+        return request.getScheme() + "://" + request.getServerName()
+                + portSuffix(request) + request.getContextPath()
+                + "/api/admin/facebook-setup/callback";
+    }
+
+    private String portSuffix(HttpServletRequest request) {
+        int port = request.getServerPort();
+        return (port == 80 || port == 443) ? "" : ":" + port;
     }
 
     private String backLink(HttpServletRequest request) {

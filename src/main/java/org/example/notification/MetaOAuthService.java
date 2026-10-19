@@ -47,7 +47,7 @@ public final class MetaOAuthService {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final HttpClient HTTP = HttpClient.newHttpClient();
-    public static final String API_VERSION = setting("META_WHATSAPP_API_VERSION", "v23.0");
+    public static final String API_VERSION = "v23.0";
     private static final String GRAPH_BASE = "https://graph.facebook.com/" + API_VERSION;
     private static final String GRAPH_HOST = "graph.facebook.com";
     private static final Logger LOGGER = Logger.getLogger(MetaOAuthService.class.getName());
@@ -1000,11 +1000,6 @@ public final class MetaOAuthService {
             query.append(encode(key)).append('=').append(encode(value));
         });
         return query.toString();
-    }
-
-    private static String setting(String name, String fallback) {
-        String value = System.getenv(name);
-        return value == null || value.isBlank() ? fallback : value.trim();
     }
 
     public static final class MetaApiException extends Exception {

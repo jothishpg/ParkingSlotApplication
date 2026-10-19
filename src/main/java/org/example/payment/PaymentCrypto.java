@@ -1,5 +1,7 @@
 package org.example.payment;
 
+import org.example.config.EncryptedSettings;
+
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.GCMParameterSpec;
@@ -71,8 +73,7 @@ public final class PaymentCrypto {
     }
 
     private static SecretKeySpec key() {
-        String encoded = System.getenv("RAZORPAY_TOKEN_ENCRYPTION_KEY");
-        if (encoded == null) throw new IllegalStateException("Set RAZORPAY_TOKEN_ENCRYPTION_KEY");
+        String encoded = EncryptedSettings.require("RAZORPAY_TOKEN_ENCRYPTION_KEY");
         byte[] key = Base64.getDecoder().decode(encoded);
         if (key.length != 32) throw new IllegalStateException("Payment encryption key must be 32 bytes");
         return new SecretKeySpec(key, "AES");

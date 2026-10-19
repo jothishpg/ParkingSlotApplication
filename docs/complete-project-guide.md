@@ -884,7 +884,7 @@ flowchart TD
 
 ### 7.2 Merchant API-key fallback
 
-The current setup page still has an API-key fallback with Key ID and Key Secret fields. It checks CSRF, credential format/mode and tests API access before saving encrypted credentials. The webhook signing secret is different: it comes from `RAZORPAY_WEBHOOK_SECRET`, not a vendor-entered webhook-secret field. Do not claim that every secret in the current Razorpay setup has been moved out of the form.
+The current setup page still has an API-key fallback with Key ID and Key Secret fields. It checks CSRF, credential format/mode and tests API access before saving encrypted credentials. The webhook signing secret is different: it is read from the encrypted `RAZORPAY_WEBHOOK_SECRET` entry in `app_settings`, not a vendor-entered webhook-secret field.
 
 **Why:** this provides a learning/test integration while partner OAuth approval is pending. It is a fallback configuration path, not a way to bypass a merchant's provider permissions or live account requirements.
 
@@ -1578,11 +1578,11 @@ The encryption helpers use `AES/GCM/NoPadding`, Base64-decoded 32-byte keys, ran
 
 | Helper/use | Key source | Encoded storage |
 | --- | --- | --- |
-| `SecretEncryption`: Google client secret | `GMAIL_TOKEN_ENCRYPTION_KEY` | Base64 packed IV/ciphertext/tag |
-| `GmailEmailService`: sender access/refresh tokens | `GMAIL_TOKEN_ENCRYPTION_KEY` | Base64 packed IV/ciphertext/tag |
-| `MetaTokenCrypto`: Meta secrets/tokens/temporary flow | `META_TOKEN_ENCRYPTION_KEY` | Base64url without padding |
-| `PaymentCrypto`: Razorpay merchant secrets/tokens | `RAZORPAY_TOKEN_ENCRYPTION_KEY` | Standard Base64 of IV followed by ciphertext and authentication tag |
-| `TwoFactorService`: active/pending TOTP seeds | `TOTP_ENCRYPTION_KEY` | Base64 packed IV/ciphertext/tag |
+| `SecretEncryption`: Google client secret | `GMAIL_TOKEN_ENCRYPTION_KEY` in `app_settings` | Base64 packed IV/ciphertext/tag |
+| `GmailEmailService`: sender access/refresh tokens | `GMAIL_TOKEN_ENCRYPTION_KEY` in `app_settings` | Base64 packed IV/ciphertext/tag |
+| `MetaTokenCrypto`: Meta secrets/tokens/temporary flow | `META_TOKEN_ENCRYPTION_KEY` in `app_settings` | Base64url without padding |
+| `PaymentCrypto`: Razorpay merchant secrets/tokens | `RAZORPAY_TOKEN_ENCRYPTION_KEY` in `app_settings` | Standard Base64 of IV followed by ciphertext and authentication tag |
+| `TwoFactorService`: active/pending TOTP seeds | `TOTP_ENCRYPTION_KEY` in `app_settings` | Base64 packed IV/ciphertext/tag |
 
 **Why GCM?** it provides confidentiality and tamper detection together. **Why a new IV each encryption?** IV reuse under a GCM key can destroy security. The implementation generates IVs randomly; it does not maintain an IV uniqueness database. **Why encrypt TOTP rather than hash it?** the server must recover the seed to compute expected codes. A password needs verification only, so it uses a different treatment.
 
@@ -1605,8 +1605,8 @@ flowchart TD
 
 HMAC combines a message and secret key into an authentication code. This is not the same as `SHA256(message)` and not encryption. A person who can read the message cannot create a valid changed signature without the key.
 
-- **Session:** HMAC of the encoded claim payload using `SESSION_SECRET`; tampering with a role/expiry invalidates it. The verifier uses a constant-time-style XOR comparison after checking signature lengths.
-- **Recovery OTP:** HMAC of request ID and OTP using `OTP_HMAC_SECRET`. Because an OTP has only one million six-digit possibilities, an unkeyed fast hash would be easy to exhaustively test from a leaked database. The request ID separates identical code values on different requests.
+- **Session:** HMAC of the encoded claim payload using the encrypted `SESSION_SECRET` value in `app_settings`; tampering with a role/expiry invalidates it. The verifier uses a constant-time-style XOR comparison after checking signature lengths.
+- **Recovery OTP:** HMAC of request ID and OTP using the encrypted `OTP_HMAC_SECRET` value in `app_settings`. Because an OTP has only one million six-digit possibilities, an unkeyed fast hash would be easy to exhaustively test from a leaked database. The request ID separates identical code values on different requests.
 - **Recovery action token:** a purpose prefix plus the random token is keyed before storage, separating password-reset authorization from authenticator-recovery authorization.
 - **Payment:** merchant-secret HMAC validates checkout/callback proof; webhook-secret HMAC validates raw webhook bytes. A webhook signing secret is not interchangeable with an OAuth client secret.
 

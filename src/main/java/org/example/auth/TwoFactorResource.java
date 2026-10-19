@@ -102,7 +102,7 @@ public class TwoFactorResource {
             return page(Response.Status.OK, "Set up authenticator", content);
         } catch (SQLException | GeneralSecurityException | WriterException | IOException exception) {
             return page(Response.Status.INTERNAL_SERVER_ERROR, "Set up authenticator",
-                    "<p>Unable to start authenticator setup. Verify TOTP_ENCRYPTION_KEY and the database configuration.</p>");
+                    "<p>Unable to start authenticator setup. Verify the TOTP_ENCRYPTION_KEY database setting and database configuration.</p>");
         }
     }
 

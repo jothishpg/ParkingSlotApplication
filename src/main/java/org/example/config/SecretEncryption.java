@@ -10,7 +10,7 @@ import java.util.Arrays;
 import java.util.Base64;
 
 public final class SecretEncryption {
-    private static final String KEY_ENV = "GMAIL_TOKEN_ENCRYPTION_KEY";
+    private static final String KEY_SETTING = "GMAIL_TOKEN_ENCRYPTION_KEY";
     private static final int IV_BYTES = 12;
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -46,15 +46,15 @@ public final class SecretEncryption {
             return new String(cipher.doFinal(encrypted), StandardCharsets.UTF_8);
         } catch (GeneralSecurityException | IllegalArgumentException exception) {
             throw new IllegalStateException(
-                    "Unable to decrypt stored credentials. Verify GMAIL_TOKEN_ENCRYPTION_KEY is unchanged.",
+                    "Unable to decrypt stored credentials. Verify the GMAIL_TOKEN_ENCRYPTION_KEY setting is unchanged.",
                     exception);
         }
     }
 
     private static SecretKeySpec encryptionKey() {
-        String encoded = System.getenv(KEY_ENV);
+        String encoded = EncryptedSettings.require(KEY_SETTING);
         if (encoded == null || encoded.isBlank()) {
-            throw new IllegalStateException(KEY_ENV
+            throw new IllegalStateException(KEY_SETTING
                     + " must contain a Base64-encoded 32-byte key.");
         }
         try {
@@ -64,7 +64,7 @@ public final class SecretEncryption {
             }
             return new SecretKeySpec(key, "AES");
         } catch (IllegalArgumentException exception) {
-            throw new IllegalStateException(KEY_ENV
+            throw new IllegalStateException(KEY_SETTING
                     + " must contain a Base64-encoded 32-byte key.", exception);
         }
     }

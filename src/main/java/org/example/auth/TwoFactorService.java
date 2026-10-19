@@ -4,6 +4,8 @@ import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import org.example.config.EncryptedSettings;
+
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
@@ -22,7 +24,7 @@ import java.util.UUID;
 
 public final class TwoFactorService {
     private static final SecureRandom RANDOM = new SecureRandom();
-    private static final String KEY_ENV = "TOTP_ENCRYPTION_KEY";
+    private static final String KEY_SETTING = "TOTP_ENCRYPTION_KEY";
     private static final int IV_LENGTH = 12;
     private static final int CODE_STEP_SECONDS = 30;
     private static final int LOGIN_TTL_SECONDS = 5 * 60;
@@ -463,19 +465,23 @@ public final class TwoFactorService {
     }
 
     private static SecretKeySpec encryptionKey() throws GeneralSecurityException {
-        String configured = System.getenv(KEY_ENV);
-        if (configured == null || configured.isBlank()) {
+        String configured;
+        try {
+            configured = EncryptedSettings.require(KEY_SETTING);
+        } catch (IllegalStateException exception) {
             throw new GeneralSecurityException(
-                    KEY_ENV + " must be configured before using authenticator enrollment.");
+                    KEY_SETTING + " must be configured before using authenticator enrollment.",
+                    exception);
         }
         try {
             byte[] key = Base64.getDecoder().decode(configured);
             if (key.length != 32) {
-                throw new GeneralSecurityException(KEY_ENV + " must be a Base64-encoded 32-byte key.");
+                throw new GeneralSecurityException(
+                        KEY_SETTING + " must be a Base64-encoded 32-byte key.");
             }
             return new SecretKeySpec(key, "AES");
         } catch (IllegalArgumentException exception) {
-            throw new GeneralSecurityException(KEY_ENV + " must be valid Base64.", exception);
+            throw new GeneralSecurityException(KEY_SETTING + " must be valid Base64.", exception);
         }
     }
 

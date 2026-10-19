@@ -6,9 +6,9 @@ This implementation follows the application's existing model: one business and o
 
 ## Database query
 
-Apply database migrations V5 through V8 in order before deployment, skipping versions already applied. V7 stores notification settings and the message queue; V8 enables native-link background reconciliation. Migrations are not executed automatically and have not been applied by this change. See [payment messaging](payment-messaging.md) for SMS, WhatsApp, expiry and retry behavior.
+Apply database migrations V5 through V8 in order and apply V20 before deployment, skipping versions already applied. V7 stores notification settings and the message queue; V8 enables native-link background reconciliation; V20 creates `app_settings`. Migrations are not executed automatically and have not been applied by this change. See [payment messaging](payment-messaging.md) for SMS, WhatsApp, expiry and retry behavior.
 
-If V5 was already applied, execute `database/migrations/V6__remove_razorpay_webhook_secrets.sql` before deploying the updated application. It removes stored webhook secrets from both `razorpay_config` and `razorpay_oauth_state`. Updated V5 does not create those columns; V6 is also safe after updated V5. Set `RAZORPAY_WEBHOOK_SECRET` and configure the same secret on all existing Razorpay webhook subscriptions before switching over. These SQL scripts are manual and have not been executed by this change.
+If V5 was already applied, execute `database/migrations/V6__remove_razorpay_webhook_secrets.sql` before deploying the updated application. It removes stored webhook secrets from both `razorpay_config` and `razorpay_oauth_state`. Updated V5 does not create those columns; V6 is also safe after updated V5. Store `RAZORPAY_WEBHOOK_SECRET` in `app_settings` using `EncryptedSettingWriter` and configure the same value on all existing Razorpay webhook subscriptions before switching over. These SQL scripts are manual and have not been executed by this change.
 
 Existing CASH rows remain unchanged. Online payments leave the legacy `payment_method` null and store the actual Razorpay method in `gateway_method`, avoiding assumptions about your existing payment-method enum. Payment history displays the gateway method where present. Amounts continue to use BigDecimal and are converted exactly to integer paise: INR 34.00 is 3400 paise. No rate rounding policy was changed.
 
@@ -17,14 +17,12 @@ Existing CASH rows remain unchanged. Online payments leave the legacy `payment_m
 | Variable | Value |
 | --- | --- |
 | `APP_BASE_URL` | Public HTTPS application URL including any context path, with no trailing slash. |
-| `RAZORPAY_TOKEN_ENCRYPTION_KEY` | Stable, backed-up Base64-encoded random 32-byte AES key. Separate from Meta/Gmail keys. |
 | `RAZORPAY_MODE` | `test` initially; `live` after account/app activation and testing. Defaults to `test`. |
-| `RAZORPAY_WEBHOOK_SECRET` | Random signing secret of at least 24 characters. Required for both OAuth and API-key setup. Supplied only through the server environment, never stored in the database. Use this same value in Razorpay webhook settings. |
 | `RAZORPAY_CLIENT_ID` | Razorpay Partner application's development or production Client ID. Required for OAuth. |
 | `RAZORPAY_CLIENT_SECRET` | Matching Partner Client Secret, stored only in server secrets. Required for OAuth. |
 | `RAZORPAY_REDIRECT_URI` | `<APP_BASE_URL>/api/admin/razorpay-setup/callback`, exactly whitelisted in the Partner app. Required for OAuth. |
 
-Generate an encryption key in PowerShell:
+Store `RAZORPAY_TOKEN_ENCRYPTION_KEY` and `RAZORPAY_WEBHOOK_SECRET` as encrypted values in `app_settings` using `EncryptedSettingWriter`. Generate a new token-encryption key in PowerShell:
 
 ```powershell
 $paymentKeyBytes = New-Object byte[] 32
@@ -32,18 +30,18 @@ $paymentKeyBytes = New-Object byte[] 32
 [Convert]::ToBase64String($paymentKeyBytes)
 ```
 
-Use the development client and test mode while production OAuth approval is pending. Approval and merchant activation are controlled by Razorpay; a 4–8 business-hour estimate is not guaranteed. Production clients require HTTPS and support live mode only. Forms use Secure cookies, so use HTTPS for application testing as well.
+Use `GLOBAL_ENCRYPTION_KEY` in the environment to encrypt/decrypt values in `app_settings`. Keep it separate from the database settings and back it up. Use the development client and test mode while production OAuth approval is pending. Approval and merchant activation are controlled by Razorpay; a 4–8 business-hour estimate is not guaranteed. Production clients require HTTPS and support live mode only. Forms use Secure cookies, so use HTTPS for application testing as well.
 
 ## Connect a merchant
 
 1. Sign in as ADMIN and open **Razorpay Setup** from the dashboard.
-2. The server administrator supplies `RAZORPAY_WEBHOOK_SECRET` through the environment. Vendors do not enter a webhook secret in the setup form. This is separate from the OAuth Client Secret/API Key Secret.
+2. The server administrator stores `RAZORPAY_WEBHOOK_SECRET` in `app_settings` using `EncryptedSettingWriter`. Vendors do not enter a webhook secret in the setup form. This is separate from the OAuth Client Secret/API Key Secret.
 3. Click **Connect your Razorpay account**. The merchant authorizes `read_write` access. OAuth state is single-use, expires in ten minutes, and is bound to the initiating admin and browser cookie.
 4. The server stores encrypted access/refresh tokens and checkout signature secrets. Webhook signing uses only `RAZORPAY_WEBHOOK_SECRET`. Access tokens refresh on use near expiry, including refresh-token rotation. Only the public token is exposed to Checkout.
 5. While Partner OAuth is unavailable, the optional merchant API-key form can connect that business's test keys. It checks the keys with Razorpay before saving. Test keys cannot collect real money.
 6. Enable automatic payment capture in the merchant Razorpay settings. Authorised payments alone never complete parking checkout.
 
-Changing connections creates a new configuration version. Existing requests keep the old credentials and webhook URL for reconciliation. All configuration versions use the current environment webhook secret; when rotating it, update all retained subscriptions as well. Keep old webhook subscriptions until their pending payments are resolved. API-key setup needs the encryption key, webhook secret, payment mode and application URL; Partner OAuth variables are unnecessary for that setup path.
+Changing connections creates a new configuration version. Existing requests keep the old credentials and webhook URL for reconciliation. All configuration versions use the current `RAZORPAY_WEBHOOK_SECRET` database setting; when rotating it, update all retained subscriptions as well. Keep old webhook subscriptions until their pending payments are resolved. API-key setup needs the encryption key setting, webhook secret setting, payment mode and application URL; Partner OAuth variables are unnecessary for that setup path.
 
 ## Webhook URL
 

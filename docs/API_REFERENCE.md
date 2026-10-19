@@ -128,7 +128,7 @@ Booking routes require `ADMIN` or `TICKET_ASSIGNER` unless a stricter
 |---|---|---|
 | `GET /booking` | — | Booking dashboard. Admin sees reporting/management links; ticket assigners also see booking and checkout links. |
 | `GET /booking/create` | — | `TICKET_ASSIGNER`; displays vehicle booking form. |
-| `POST /booking/create` | Form: `vehicleTypeId`, `vehicleNumber`, `phoneNumber`, `color` | `TICKET_ASSIGNER`; finds an available matching slot, starts booking, stores vehicle details, and queues WhatsApp confirmation. The handler currently rejects a blank `color` even though the HTML form marks it optional. |
+| `POST /booking/create` | Form: `vehicleTypeId`, `vehicleNumber`, `phoneNumber`, `color` | `TICKET_ASSIGNER`; validates the vehicle number, finds an available matching slot, starts booking, stores vehicle details, and queues WhatsApp confirmation. Vehicle format must be `AB01A1234` or `AB01CD1234`; invalid input is rejected with a correction message. |
 | `GET /booking/checkout` | Query: optional `vehicleNumber` | `TICKET_ASSIGNER`; with no number shows search form; with a number loads active booking, elapsed minutes, and amount. |
 | `POST /booking/checkout/{bookingId}/pay` | Path: `bookingId`; Form: `paymentMethod` (`CASH` or `ONLINE`) | `TICKET_ASSIGNER`; cash closes booking and records payment; online starts a Razorpay payment request and redirects to its checkout page. |
 | `GET /booking/current` | — | Lists active bookings. |
@@ -137,7 +137,8 @@ Booking routes require `ADMIN` or `TICKET_ASSIGNER` unless a stricter
 | `GET /booking/payment-history` | — | Lists payment amount, gateway/method, status, and verifier. |
 
 `vehicleNumber` is normalized by removing spaces/hyphens and uppercasing before
-booking lookup. Duration pricing uses the configured vehicle rate tiers.
+format validation and storage. Duration pricing uses the configured vehicle
+rate tiers.
 
 ## Facebook / Meta and WhatsApp account setup
 
@@ -188,6 +189,62 @@ the `GMAIL_EMAIL_SETUP_STATE` cookie.
 
 The Gmail sender is global to the application. It is used for password-reset
 emails and (when the listener is running) automatic mailbox replies.
+
+## Admin booking alerts
+
+| Method and route | Parameters | Use |
+|---|---|---|
+| `GET /admin/alerts` | — | Opens the alert page after a fresh password check for the signed-in administrator; verification expires after 10 minutes. |
+| `POST /admin/alerts/verify` | Form: `password` | Re-verifies the signed-in administrator before granting temporary access to the alert form. |
+| `POST /admin/alerts/send` | Form: `target` (`ALL`, `FLOOR`, or `SLOT`), `floorName`, `slotName`, `message` | Sends the message to each distinct phone number with an active booking in the selected scope, using the assigned booking confirmation WhatsApp template. |
+
+## Zoho Cliq OAuth setup
+
+All `/admin/zoho-setup` routes require `ADMIN`. OAuth uses the Zoho India
+accounts server. OAuth state is bound to the
+`ZOHO_CLIQ_SETUP_STATE` cookie. The Zoho client secret and access/refresh
+tokens are encrypted at rest.
+
+| Method and route | Parameters | Use |
+|---|---|---|
+| `GET /admin/zoho-setup` | — | Shows the callback URL, client configuration, and connection status. |
+| `POST /admin/zoho-setup/client` | Form: `clientId`, `clientSecret` | Saves the Zoho OAuth client configuration; changing it removes the existing connection. |
+| `GET /admin/zoho-setup/authorize` | — | Starts Zoho India OAuth with `ZohoCliq.Bots.CREATE`, `ZohoCliq.Bots.READ`, `ZohoCliq.Bots.UPDATE`, and `ZohoCliq.Bots.DELETE`. |
+| `GET /admin/zoho-setup/callback` | Query: `code`, `state`; optional `error`; Cookie: `ZOHO_CLIQ_SETUP_STATE` | Exchanges the code, verifies the bot read, create, update, and delete scopes, and saves encrypted tokens and granted scopes. |
+| `POST /admin/zoho-setup/bot` | Form: `name`, `description` | Creates an organization-scoped webhook bot with the Cliq v3 Bots API and adds its `message_handler`; its execution URL is the app's `/api/cliq/webhook`. |
+| `POST /admin/zoho-setup/bot/handler` | — | Retries creation of the existing bot's message handler without creating another bot. |
+| `POST /admin/zoho-setup/bot/details` | — | Fetches `GET /api/v3/bots/{BOT_ID}` with the saved Zoho token and renders Zoho's JSON response in the setup page. |
+| `POST /admin/zoho-setup/bot/delete` | — | Deletes the configured bot and its handlers using `DELETE /api/v3/bots/{BOT_ID}`, then removes the local bot configuration only after Zoho confirms success. |
+| `POST /admin/zoho-setup/disconnect` | — | Removes the Zoho authorization grant while retaining the OAuth client configuration. |
+| `POST /cliq/webhook` | JSON Cliq message event containing `params.message` and `response_url` | Public Zoho callback; parses booking ID and vehicle number, validates both against a booking, and posts a booking summary or format prompt to the validated response URL. |
+
+Set `ZOHO_REDIRECT_URI` to the exact public callback URL registered in the Zoho
+API Console. If it is omitted, `APP_BASE_URL` is used to construct that URL.
+`APP_BASE_URL` also determines the public webhook URL. The OAuth client
+configuration, connection, and locally configured bot are each limited to one
+row per database. Bot creation requires a name (maximum 20 characters) and
+description (maximum 300 characters); the application always sets its scope to
+`organization`. Bot creation uses
+`POST /api/v3/bots`; the handler uses `POST /api/v3/bots/{BOT_ID}/handlers`
+with message, user, and chat permissions. The handler forwards inbound data to
+the existing webhook. Send `BookingID:19, Vehicle_Number:TN28MA1829` to look up a
+booking; labels are case-insensitive, spaces around fields are ignored, and
+vehicle-number matching ignores case, whitespace, and hyphens. Extra text after
+the vehicle number is ignored. Ticket assigners must enter vehicle numbers in
+the format `AB01A1234` or `AB01CD1234`; spaces and hyphens are ignored during
+normalization. Cliq performs no vehicle-number format validation. Active
+bookings show the fee accrued using the configured rate tiers up to the current
+time; completed bookings show their stored final fee. The response is posted to
+the event's `response_url` so it appears in the same conversation. Sending
+`Fee details` or asking about fees, rates, or charges returns the configured
+per-minute tiers for each vehicle type from `vehicle_rate`. See Zoho's official
+[bot creation](https://www.zoho.com/cliq/help/restapi/v3/bots/#create-a-bot)
+and [handler creation](https://www.zoho.com/cliq/help/restapi/v3/bots/#create-a-handler-for-a-specific-bot)
+documentation.
+The bot-details action requires the `ZohoCliq.Bots.READ` OAuth scope and uses
+the locally stored Zoho bot ID to request its details. Bot deletion requires
+`ZohoCliq.Bots.DELETE`; reconnect Zoho to grant the additional scope to an
+existing connection. A failed remote delete preserves the local bot record.
 
 ## Razorpay administration and reconciliation
 
@@ -260,7 +317,7 @@ OAuth redirects to `https://www.facebook.com/{version}/dialog/oauth` with
 `client_id`, `redirect_uri`, `response_type=code`, the scopes
 `business_management`, `whatsapp_business_management`,
 `whatsapp_business_messaging`, `whatsapp_business_manage_events`, and signed
-`state`. Graph version is `META_WHATSAPP_API_VERSION` (default `v23.0`). Graph
+`state`. Graph version is configured in the application as `v23.0`. Graph
 requests use an OAuth Bearer token unless noted.
 
 | Graph request | Parameters/body | Use |
@@ -306,7 +363,7 @@ the configured Key ID/secret.
 The hosted checkout UI also loads
 `https://checkout.razorpay.com/v1/checkout.js`. Payment-link callback values
 are signed and verified by the inbound callback route; webhooks use the inbound
-route and `RAZORPAY_WEBHOOK_SECRET`.
+route and the encrypted `RAZORPAY_WEBHOOK_SECRET` value from `app_settings`.
 
 ### Notification dispatch
 

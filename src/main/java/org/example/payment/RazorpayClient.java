@@ -2,6 +2,7 @@ package org.example.payment;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.example.config.EncryptedSettings;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -85,7 +86,7 @@ public final class RazorpayClient {
     }
 
     public static String webhookSecret() {
-        return required("RAZORPAY_WEBHOOK_SECRET");
+        return EncryptedSettings.require("RAZORPAY_WEBHOOK_SECRET");
     }
 
     public static String text(JsonNode node, String field) {

@@ -1,0 +1,6 @@
+POST https://parking-app-50046208376.development.catalystappsail.in/api/cliq/webhook
+Content-Type: application/json
+
+{
+  "message": "What is my parking fee?"
+}

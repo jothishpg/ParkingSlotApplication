@@ -15,6 +15,7 @@ import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.example.config.DatabaseConnection;
+import org.example.config.EncryptedSettings;
 import org.example.notification.GmailEmailService;
 import org.example.notification.WhatsAppNotificationService;
 
@@ -51,7 +52,7 @@ public class ForgotPasswordResource {
             Logger.getLogger(ForgotPasswordResource.class.getName());
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    private static final String OTP_SECRET = setting("OTP_HMAC_SECRET");
+    private static final String OTP_SECRET_SETTING = "OTP_HMAC_SECRET";
     private static final String APP_BASE_URL = setting("APP_BASE_URL");
 
     private static final int SMS_OTP_MINUTES = 5;          // SMS arrives fast -> short life
@@ -669,7 +670,7 @@ public class ForgotPasswordResource {
                 }
 
                 connection.commit();
-                sendPasswordChangedNoticeAsync(user.email(), user.phone());
+                sendPasswordChangedNoticeAsync(user.email());
                 return successPage(request);
 
             } catch (SQLException exception) {
@@ -1207,20 +1208,30 @@ public class ForgotPasswordResource {
     }
 
 
-    private void sendPasswordChangedNoticeAsync(String email, String phone) {
+    private void sendPasswordChangedNoticeAsync(String email) {
         SENDER.submit(() -> {
             try {
-                sendPasswordChangedNotice(email, phone);
+                sendPasswordChangedNotice(email);
             } catch (Exception exception) {
                 LOGGER.log(Level.WARNING, "Could not send the password-changed notice.", exception);
             }
         });
     }
 
-    /** Tell the real owner the password changed (in case somebody else did it). */
-    private void sendPasswordChangedNotice(String email, String phone) {
-        // TODO: send "Your password was changed. If this was not you, contact support."
-        // to the email and/or phone using your own API.
+    private void sendPasswordChangedNotice(String email) {
+        if (blank(email)) {
+            LOGGER.warning("Password-changed notice email was skipped: account email is blank.");
+            return;
+        }
+        try {
+            GmailEmailService.sendEmail(
+                    email,
+                    "Your Parking Management System password was changed",
+                    "Your account password was changed. If you did not make this change, "
+                            + "contact the parking administrator immediately.");
+        } catch (GmailEmailService.EmailSetupException exception) {
+            LOGGER.log(Level.WARNING, "Could not send the password-changed notice email.", exception);
+        }
     }
 
     // ==================================================================
@@ -1245,7 +1256,9 @@ public class ForgotPasswordResource {
     private static String hmacHex(String data) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(OTP_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            mac.init(new SecretKeySpec(
+                    EncryptedSettings.require(OTP_SECRET_SETTING).getBytes(StandardCharsets.UTF_8),
+                    "HmacSHA256"));
             return HexFormat.of().formatHex(mac.doFinal(data.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception exception) {
             throw new IllegalStateException("Unable to hash value.", exception);
@@ -1275,7 +1288,7 @@ public class ForgotPasswordResource {
     }
 
     private boolean secretConfigured() {
-        return !blank(OTP_SECRET);
+        return !blank(EncryptedSettings.get(OTP_SECRET_SETTING));
     }
 
     private boolean blank(String value) {

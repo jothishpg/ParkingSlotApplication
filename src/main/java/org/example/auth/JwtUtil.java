@@ -1,6 +1,7 @@
 package org.example.auth;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.example.config.EncryptedSettings;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -25,14 +26,7 @@ public final class JwtUtil {
     }
 
     private static String requiredSecret() {
-        String value = System.getenv("SESSION_SECRET");
-        if (value == null || value.isBlank()) {
-            throw new IllegalStateException(
-                    "SESSION_SECRET environment variable is not set. "
-                            + "Generate one long random value and set it in Catalyst's "
-                            + "Environmental Variables before deploying.");
-        }
-        return value;
+        return EncryptedSettings.require("SESSION_SECRET");
     }
 
     public static String generate(Map<String, Object> claims, long ttlSeconds) {

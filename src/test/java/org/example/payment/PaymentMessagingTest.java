@@ -53,10 +53,20 @@ class PaymentMessagingTest {
         assertTrue(message.contains(expiry.toString()));
     }
     @Test void bookingTemplateKeepsFiveValuesAndAppendsPaymentDetails() {
-        Map<String,String> parameters=WhatsAppNotificationService.paymentTemplateParameters("TN123","First","A1","10:00","Payment pending; https://example.com/pay");
-        assertEquals(5,parameters.size());assertEquals("TN123",parameters.get("vehicle_number"));
+        Map<String,String> parameters=WhatsAppNotificationService.paymentTemplateParameters(19,"TN123","First","A1","10:00","Payment pending; https://example.com/pay");
+        assertEquals(5,parameters.size());assertEquals("19",parameters.get("driver_name"));
+        assertEquals("TN123",parameters.get("vehicle_number"));
         assertEquals("First",parameters.get("floor_name"));assertEquals("A1",parameters.get("slot_name"));
         assertEquals("10:00 | Payment pending; https://example.com/pay",parameters.get("start_time"));
+    }
+    @Test void alertTemplateUsesFillerValuesAndIncludesTheAdminMessage() {
+        Map<String,String> parameters=WhatsAppNotificationService.alertTemplateParameters(
+                "Parking closes at 6 PM", "First", "Alert");
+        assertEquals(java.util.List.of("driver_name","vehicle_number","floor_name","slot_name","start_time"),
+                new java.util.ArrayList<>(parameters.keySet()));
+        assertEquals(java.util.List.of("Parking Alert","ALERT","First","Alert",
+                        "Parking alert | Parking closes at 6 PM"),
+                new java.util.ArrayList<>(parameters.values()));
     }
     @Test void messageEventsCannotAcceptArbitraryStatusClaims() {
         assertThrows(IllegalArgumentException.class,()->PaymentMessaging.text("UNKNOWN",1,3400,null,Instant.now()));

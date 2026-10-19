@@ -32,7 +32,6 @@ public class EmailSetupResource {
     private static final String STATE_COOKIE = "GMAIL_EMAIL_SETUP_STATE";
     private static final long STATE_TTL_SECONDS = 10 * 60;
     private static final String APP_BASE_URL = setting("APP_BASE_URL");
-    private static final String GMAIL_REDIRECT_URI = setting("GMAIL_REDIRECT_URI");
 
     @GET
     public Response status(@Context HttpServletRequest request) {
@@ -47,7 +46,7 @@ public class EmailSetupResource {
         String redirectUri = redirectUri(request);
         if (redirectUri == null) {
             return setupPage(request,
-                    "Set GMAIL_REDIRECT_URI to this application's public HTTPS callback URL before connecting Gmail.",
+                    "Connect Gmail over HTTPS or configure APP_BASE_URL with this application's public HTTPS URL.",
                     Response.Status.INTERNAL_SERVER_ERROR);
         }
 
@@ -97,7 +96,7 @@ public class EmailSetupResource {
         } catch (RuntimeException exception) {
             LOGGER.log(Level.SEVERE, "Unable to encrypt the Google OAuth client secret.", exception);
             return setupPage(request,
-                    "Unable to encrypt the Google OAuth client secret. Verify GMAIL_TOKEN_ENCRYPTION_KEY is configured.",
+                    "Unable to encrypt the Google OAuth client secret. Verify the GMAIL_TOKEN_ENCRYPTION_KEY database setting is configured.",
                     Response.Status.SERVICE_UNAVAILABLE);
         }
     }
@@ -134,7 +133,8 @@ public class EmailSetupResource {
 
         String redirectUri = redirectUri(request);
         if (redirectUri == null) {
-            return withCookie(setupPage(request, "GMAIL_REDIRECT_URI is not configured.",
+            return withCookie(setupPage(request,
+                    "Connect Gmail over HTTPS or configure APP_BASE_URL with this application's public HTTPS URL.",
                     Response.Status.INTERNAL_SERVER_ERROR), clearState);
         }
 
@@ -316,11 +316,8 @@ public class EmailSetupResource {
     }
 
     private String redirectUri(HttpServletRequest request) {
-        if (GMAIL_REDIRECT_URI != null && !GMAIL_REDIRECT_URI.isBlank()) {
-            return GMAIL_REDIRECT_URI;
-        }
         if (APP_BASE_URL != null && !APP_BASE_URL.isBlank()) {
-            return APP_BASE_URL + "/api/admin/email-setup/callback";
+            return APP_BASE_URL.replaceAll("/+$", "") + "/api/admin/email-setup/callback";
         }
         if (request.isSecure()) {
             return request.getScheme() + "://" + request.getServerName()

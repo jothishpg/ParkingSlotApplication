@@ -1,5 +1,7 @@
 # Customer payment links and notifications
 
+Webhook signature verification uses the encrypted `RAZORPAY_WEBHOOK_SECRET` value in `app_settings`. Configure the same secret in Razorpay's webhook settings; the application decrypts it using `GLOBAL_ENCRYPTION_KEY`.
+
 Online checkout creates native Razorpay Payment Links with a 15-minute window plus a 30-second request-transit allowance. Razorpay validates its minimum expiry when the request arrives, so exactly 900 seconds from the application clock may be rejected. The returned provider deadline is saved and displayed; resends never extend it. Razorpay sends link SMS; the existing Meta integration sends WhatsApp links and status updates. No Twilio or additional SMS-provider credentials are used.
 
 Apply database migrations V7__payment_customer_notifications.sql and V8__payment_link_reconciliation.sql, in order, after V5/V6. Skip migrations already applied. No database migration has been executed by this change. Existing requests retain their saved deadlines; new links use 15 minutes.
@@ -36,7 +38,7 @@ Razorpay receipts are separate from the application's checkout notification. No 
 
 ## Webhooks
 
-Keep the existing webhook URL and RAZORPAY_WEBHOOK_SECRET. Subscribe to payment_link.paid, payment_link.expired and payment_link.cancelled. Partial payments are disabled for application-created links. Callbacks use public HTTPS APP_BASE_URL.
+Keep the existing webhook URL and `RAZORPAY_WEBHOOK_SECRET` database setting. Subscribe to `payment_link.paid`, `payment_link.expired` and `payment_link.cancelled`. Partial payments are disabled for application-created links. Callbacks use public HTTPS `APP_BASE_URL`.
 
 Inspect queue state without exposing customer links:
 

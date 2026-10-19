@@ -33,7 +33,7 @@ public final class WhatsAppNotificationService {
 
     public static void sendBookingConfirmation(long bookingId) {
         String sql = """
-            SELECT b.phone_number, b.vehicle_number,
+            SELECT b.phone_number, b.booking_id, b.vehicle_number,
                    f.floor_name, s.slot_name, b.start_time
             FROM booking b
             JOIN slot s ON s.slot_id = b.slot_id
@@ -46,7 +46,7 @@ public final class WhatsAppNotificationService {
             try (ResultSet result = statement.executeQuery()) {
                 if (result.next()) {
                     Map<String, String> parameters = new LinkedHashMap<>();
-                    parameters.put("driver_name", result.getString("vehicle_number"));
+                    parameters.put("driver_name", Long.toString(result.getLong("booking_id")));
                     parameters.put("vehicle_number", result.getString("vehicle_number"));
                     parameters.put("floor_name", result.getString("floor_name"));
                     parameters.put("slot_name", result.getString("slot_name"));
@@ -132,23 +132,41 @@ public final class WhatsAppNotificationService {
 
     /** Reuses the assigned booking template without changing its five-variable structure. */
     public static boolean sendPaymentMessage(long bookingId, String recipient, String message) throws SQLException {
-        String sql = "SELECT b.vehicle_number,b.start_time,f.floor_name,s.slot_name FROM booking b "
+        String sql = "SELECT b.booking_id,b.vehicle_number,b.start_time,f.floor_name,s.slot_name FROM booking b "
                 + "JOIN slot s ON s.slot_id=b.slot_id JOIN floor f ON f.floor_id=s.floor_id WHERE b.booking_id=?";
         try (Connection c = DatabaseConnection.getConnection(); PreparedStatement s = c.prepareStatement(sql)) {
             s.setLong(1, bookingId);
             try (ResultSet r = s.executeQuery()) {
                 if (!r.next()) return false;
                 return sendAssignedTemplate(recipient, "BOOKING_CONFIRMATION", paymentTemplateParameters(
-                        r.getString("vehicle_number"),r.getString("floor_name"),r.getString("slot_name"),
+                        r.getLong("booking_id"), r.getString("vehicle_number"),
+                        r.getString("floor_name"),r.getString("slot_name"),
                         r.getTimestamp("start_time").toString(),message));
             }
         }
     }
 
-    public static Map<String,String> paymentTemplateParameters(String vehicle, String floor, String slot,
+    public static boolean sendAlertMessage(
+            String recipient, String message, String floor, String slot) {
+        return sendAssignedTemplate(recipient, "BOOKING_CONFIRMATION",
+                alertTemplateParameters(message, floor, slot));
+    }
+
+    public static Map<String, String> alertTemplateParameters(
+            String message, String floor, String slot) {
+        Map<String, String> parameters = new LinkedHashMap<>();
+        parameters.put("driver_name", "Parking Alert");
+        parameters.put("vehicle_number", "ALERT");
+        parameters.put("floor_name", floor);
+        parameters.put("slot_name", slot);
+        parameters.put("start_time", "Parking alert | " + message);
+        return parameters;
+    }
+
+    public static Map<String,String> paymentTemplateParameters(long bookingId, String vehicle, String floor, String slot,
                                                                String start, String message) {
         Map<String,String> parameters = new LinkedHashMap<>();
-        parameters.put("driver_name",vehicle);
+        parameters.put("driver_name", Long.toString(bookingId));
         parameters.put("vehicle_number",vehicle);
         parameters.put("floor_name",floor);
         parameters.put("slot_name",slot);

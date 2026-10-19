@@ -1,5 +1,5 @@
 // MultiParkingSystem PostgreSQL public schema
-// Updated for payment schema migrations through V16.
+// Updated for schema migrations through V19.
 // Partial indexes are documented below because DBML does not faithfully
 // express PostgreSQL predicates on indexes.
 
@@ -76,6 +76,55 @@ Table google_oauth_config {
   client_id varchar(255) [not null]
   encrypted_client_secret text [not null]
   configured_by_user_id bigint
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+Table zoho_oauth_client_config {
+  config_id smallint [pk, not null, note: 'CHECK (config_id = 1)']
+  client_id varchar(255) [not null]
+  encrypted_client_secret text [not null]
+  configured_by_user_id bigint
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+Table zoho_oauth_connection {
+  connection_id smallint [pk, not null, note: 'CHECK (connection_id = 1)']
+  config_id smallint [not null]
+  zoho_org_id varchar(128)
+  connected_by_user_id bigint
+  connected_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+Table zoho_oauth_token {
+  connection_id smallint [pk, not null]
+  encrypted_access_token text [not null]
+  encrypted_refresh_token text [not null]
+  access_token_expires_at timestamptz [not null]
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+Table zoho_oauth_connection_scope {
+  connection_id smallint [not null]
+  scope_name varchar(255) [not null]
+
+  indexes {
+    (connection_id, scope_name) [pk]
+  }
+}
+
+Table zoho_cliq_bot_config {
+  config_id smallint [pk, not null, note: 'CHECK (config_id = 1)']
+  zoho_bot_id varchar(128) [not null, unique]
+  bot_unique_name varchar(128) [not null, unique]
+  bot_name varchar(20) [not null]
+  description varchar(300) [not null]
+  scope varchar(20) [not null, note: "CHECK (scope IN ('organization', 'team', 'personal'))"]
+  message_handler_configured boolean [not null, default: false]
+  created_by_user_id bigint
   created_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
   updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
 }
@@ -493,6 +542,12 @@ Ref: floor.vehicle_type_id > vehicle_type.vehicle_type_id
 Ref: floor_block.user_id > users.user_id
 Ref: floor_block.floor_id > floor.floor_id
 Ref: google_oauth_config.configured_by_user_id > users.user_id [delete: set null]
+Ref: zoho_oauth_client_config.configured_by_user_id > users.user_id [delete: set null]
+Ref: zoho_oauth_connection.config_id > zoho_oauth_client_config.config_id [delete: cascade]
+Ref: zoho_oauth_connection.connected_by_user_id > users.user_id [delete: set null]
+Ref: zoho_oauth_token.connection_id - zoho_oauth_connection.connection_id [delete: cascade]
+Ref: zoho_oauth_connection_scope.connection_id > zoho_oauth_connection.connection_id [delete: cascade]
+Ref: zoho_cliq_bot_config.created_by_user_id > users.user_id [delete: set null]
 Ref: local_auth.user_id - users.user_id [delete: cascade]
 Ref: meta_app_config.configured_by_user_id > users.user_id [delete: set null]
 Ref: meta_phone_number.waba_id > meta_waba.waba_id [delete: cascade]

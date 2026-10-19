@@ -25,6 +25,8 @@ import java.sql.Types;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.regex.Pattern;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -38,6 +40,8 @@ public class BookingResource {
 
     private static final String APP_BASE_URL =
             setting("APP_BASE_URL");
+    private static final Pattern VEHICLE_NUMBER_FORMAT =
+            Pattern.compile("[A-Z]{2}\\d{2}[A-Z]{1,2}\\d{4}");
 
     @GET
     public Response dashboard(
@@ -83,7 +87,8 @@ public class BookingResource {
                             %2$s
                         </select><br><br>
                         <label for="vehicleNumber">Vehicle Number</label><br>
-                        <input type="text" id="vehicleNumber" name="vehicleNumber" maxlength="50" required><br><br>
+                        <input type="text" id="vehicleNumber" name="vehicleNumber" maxlength="50" required>
+                        <small>Format: AB01A1234 or AB01CD1234</small><br><br>
                         <label for="phoneNumber">Phone Number</label><br>
                         <input type="text" id="phoneNumber" name="phoneNumber" maxlength="10" required><br><br>
                         <label for="color">Vehicle Color</label><br>
@@ -113,11 +118,15 @@ public class BookingResource {
             return error(base, "Vehicle type, vehicle number, phone number, and color are required.");
         }
 
-        String normalizedVehicle = normalizeVehicle(vehicleNumber);
+        String normalizedVehicle = normalizeVehicleNumber(vehicleNumber);
         String normalizedPhone = phoneNumber.trim();
         String enteredColor = color.trim();
         if (normalizedVehicle.isEmpty()) {
             return error(base, "Vehicle number is required.");
+        }
+        if (!isValidVehicleNumber(normalizedVehicle)) {
+            return error(base,
+                    "Vehicle number must be in the format AB01A1234 or AB01CD1234.");
         }
 
         String activeVehicleSql = """
@@ -297,7 +306,7 @@ public class BookingResource {
                     """.formatted(base));
         }
 
-        String normalizedVehicle = normalizeVehicle(vehicleNumber);
+        String normalizedVehicle = normalizeVehicleNumber(vehicleNumber);
         String sql = """
                 SELECT b.booking_id, b.vehicle_number, b.phone_number, b.start_time,
                        s.slot_name, f.floor_name, f.vehicle_type_id,
@@ -751,10 +760,15 @@ public class BookingResource {
         return Long.parseLong(securityContext.getUserPrincipal().getName());
     }
 
-    private String normalizeVehicle(String value) {
+    static String normalizeVehicleNumber(String value) {
         return value.trim()
                 .replaceAll("[\\s-]+", "")
-                .toUpperCase();
+                .toUpperCase(Locale.ROOT);
+    }
+
+    static boolean isValidVehicleNumber(String normalizedVehicleNumber) {
+        return normalizedVehicleNumber != null
+                && VEHICLE_NUMBER_FORMAT.matcher(normalizedVehicleNumber).matches();
     }
 
     private boolean blank(String value) {

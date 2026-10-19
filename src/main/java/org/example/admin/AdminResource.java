@@ -52,8 +52,10 @@ public class AdminResource {
                     <a href="%1$s/api/booking/payment-history">Payment History</a>
                     |
                     <a href="%1$s/api/admin/email-setup">Email Setup</a>
+                    | <a href="%1$s/api/admin/zoho-setup">Zoho Cliq Setup</a>
                     | <a href="%1$s/api/admin/razorpay-setup">Razorpay Setup</a>
                     | <a href="%1$s/api/admin/payment-reconciliation">Payment Reconciliation</a>
+                    | <a href="%1$s/api/admin/alerts">Alert Current Bookings</a>
                     |
                     <a href="%1$s/api/admin/facebook-setup">Facebook / WhatsApp Setup</a>
                     |

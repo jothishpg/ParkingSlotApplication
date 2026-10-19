@@ -50,8 +50,6 @@ public class AuthResource {
     private static final GsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    private static final String GOOGLE_REDIRECT_URI =
-            setting("GOOGLE_REDIRECT_URI");
     private static final String APP_BASE_URL =
             setting("APP_BASE_URL");
 
@@ -997,8 +995,8 @@ public class AuthResource {
     }
 
     private String googleRedirectUri(HttpServletRequest request) {
-        if (!blank(GOOGLE_REDIRECT_URI)) {
-            return GOOGLE_REDIRECT_URI;
+        if (!blank(APP_BASE_URL)) {
+            return APP_BASE_URL.replaceAll("/+$", "") + "/api/auth/google/callback";
         }
 
         StringBuilder uri = new StringBuilder()

@@ -14,7 +14,8 @@ public class ParkingApplication extends ResourceConfig {
                 "org.example.booking",
                 "org.example.resource",
                 "org.example.filter",
-                "org.example.payment"
+                "org.example.payment",
+                "org.example.cliq"
         );
     }
 }
