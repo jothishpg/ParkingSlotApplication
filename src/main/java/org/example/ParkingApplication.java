@@ -12,6 +12,7 @@ public class ParkingApplication extends ResourceConfig {
                 "org.example.auth",
                 "org.example.admin",
                 "org.example.booking",
+                "org.example.profile",
                 "org.example.resource",
                 "org.example.filter",
                 "org.example.payment",

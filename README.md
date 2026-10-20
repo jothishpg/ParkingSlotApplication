@@ -22,6 +22,15 @@ At startup, the application creates and encrypts any missing rows for the seven 
 
 Startup-generated settings use Base64-encoded random 32-byte values. After the first startup, open the admin-only **Razorpay Setup** page and copy the displayed `RAZORPAY_WEBHOOK_SECRET` into Razorpay's webhook configuration. Until Razorpay has the same value, webhook signatures will not verify. If preserving previously used secrets, especially encryption keys, seed those existing values with `EncryptedSettingWriter` before the first startup; generated replacements cannot decrypt older data or verify signatures made with old values.
 
+## User profiles
+
+Administrators and ticket assigners can open **My Profile** from their dashboard
+to update their own name, email, and phone number independently or change their
+local password after entering the current password. Apply
+`database/migrations/V21__create_user_profile_change.sql` after V20 to record
+each profile detail change with the user ID, field name, old/new values, and
+timestamp. Passwords are intentionally excluded from this audit log.
+
 ## Razorpay payments
 
 Checkout supports cash and native Razorpay Payment Links with merchant OAuth setup, a 15-minute window plus a request-transit allowance, signed webhooks and background reconciliation. Razorpay sends the initial link SMS when the API creates the payment link; WhatsApp link and status messages use the message queue. WhatsApp uses the existing booking template for links and pending/error updates, and the checkout template for successful payments. Apply migrations V5 through V8 in order, skipping versions already applied. See the [Razorpay setup guide](docs/razorpay-setup.md) and [payment messaging guide](docs/payment-messaging.md). This follows the existing one-business-per-database model.

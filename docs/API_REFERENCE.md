@@ -30,6 +30,24 @@ parameters. Routes requiring a role use the authenticated `AUTH_TOKEN` session.
 Google signup additionally uses the temporary, HttpOnly `GOOGLE_SIGNUP_PENDING`
 cookie; the server does not accept a user ID or Google identity from the form.
 
+## User profile
+
+Profile routes require `ADMIN` or `TICKET_ASSIGNER` and use the authenticated
+user ID from the session; they do not accept a user ID from the browser.
+Apply `database/migrations/V21__create_user_profile_change.sql` before using
+profile edits. Each changed name, email, or phone number is written to
+`user_profile_change` in the same transaction as the profile update. Password
+values are never written to the change log.
+
+| Method and route | Parameters | Access and use |
+|---|---|---|
+| `GET /profile` | — | Shows the current user's name, email, and phone number, with separate forms to update each value. |
+| `POST /profile/name` | Form: `value` | Updates the signed-in user's name and records the old and new values. |
+| `POST /profile/email` | Form: `value` | Updates the signed-in user's email if it is not already in use and records the old and new values. |
+| `POST /profile/phone` | Form: `value` (10 digits) | Updates the signed-in user's phone number and records the old and new values. |
+| `GET /profile/password` | — | Shows the local-password change form. |
+| `POST /profile/password` | Form: `currentPassword`, `newPassword`, `confirmPassword` | Verifies the current password before replacing the bcrypt hash. Accounts without a local password cannot use this form. |
+
 ## Password reset and authenticator recovery
 
 These public routes use form fields unless stated otherwise. Verification codes

@@ -491,6 +491,19 @@ Table users {
   profile_completed boolean [not null, default: true]
 }
 
+Table user_profile_change {
+  change_id bigint [pk, increment, note: 'GENERATED ALWAYS AS IDENTITY']
+  user_id bigint [not null]
+  updated_value varchar(32) [not null, note: 'Changed field name; password values are never recorded']
+  old_value text [not null]
+  new_value text [not null]
+  time_of_update timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  indexes {
+    (user_id, time_of_update) [name: 'user_profile_change_user_time_idx']
+  }
+}
+
 Table vehicle_details {
   vehicle_number varchar(50) [not null]
   color varchar(50)
@@ -547,6 +560,7 @@ Ref: floor.created_by > users.user_id
 Ref: floor.vehicle_type_id > vehicle_type.vehicle_type_id
 Ref: floor_block.user_id > users.user_id
 Ref: floor_block.floor_id > floor.floor_id
+Ref: user_profile_change.user_id > users.user_id [delete: cascade]
 Ref: google_oauth_config.configured_by_user_id > users.user_id [delete: set null]
 Ref: zoho_oauth_client_config.configured_by_user_id > users.user_id [delete: set null]
 Ref: zoho_oauth_connection.config_id > zoho_oauth_client_config.config_id [delete: cascade]
