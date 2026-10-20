@@ -14,10 +14,6 @@ import java.sql.*;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
-/**
- * Keeps notification network calls outside the webhook response and checkout transaction.
- */
-@WebListener
 public class PaymentNotificationListener implements ServletContextListener {
     private static final Logger LOG = Logger.getLogger(PaymentNotificationListener.class.getName());
     private ScheduledExecutorService worker;

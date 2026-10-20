@@ -884,7 +884,7 @@ flowchart TD
 
 ### 7.2 Merchant API-key fallback
 
-The current setup page still has an API-key fallback with Key ID and Key Secret fields. It checks CSRF, credential format/mode and tests API access before saving encrypted credentials. The webhook signing secret is different: it is read from the encrypted `RAZORPAY_WEBHOOK_SECRET` entry in `app_settings`, not a vendor-entered webhook-secret field.
+The current setup page still has an API-key fallback with Key ID and Key Secret fields. It checks CSRF, credential format/mode and tests API access before saving encrypted credentials. The webhook signing secret is read from the encrypted `RAZORPAY_WEBHOOK_SECRET` entry in `app_settings`, not a vendor-entered webhook-secret field. The startup listener creates the setting if absent, and the admin-only Razorpay Setup page displays it for configuring Razorpay webhooks.
 
 **Why:** this provides a learning/test integration while partner OAuth approval is pending. It is a fallback configuration path, not a way to bypass a merchant's provider permissions or live account requirements.
 

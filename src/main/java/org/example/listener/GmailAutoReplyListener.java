@@ -8,7 +8,6 @@ import org.example.notification.GmailAutoReplyService;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
 
-@WebListener
 public class GmailAutoReplyListener implements ServletContextListener {
     private static final Logger LOG = Logger.getLogger(GmailAutoReplyListener.class.getName());
     private ScheduledExecutorService worker;

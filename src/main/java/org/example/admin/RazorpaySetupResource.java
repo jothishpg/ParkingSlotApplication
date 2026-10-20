@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.*;
 import org.example.config.DatabaseConnection;
+import org.example.config.EncryptedSettings;
 import org.example.payment.MerchantConfig;
 import org.example.payment.RazorpayClient;
 
@@ -24,6 +25,7 @@ public class RazorpaySetupResource {
     @GET
     public Response page(@Context HttpServletRequest request) {
         String status = "No Razorpay API keys configured.";
+        String webhookSecret;
         try (Connection connection = DatabaseConnection.getConnection();
              Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("SELECT config_id, public_key FROM razorpay_config WHERE active")) {
@@ -32,24 +34,32 @@ public class RazorpaySetupResource {
                         + " mode. Webhook URL: " + base(request)
                         + "/api/payments/razorpay/webhook/" + result.getLong("config_id");
             }
+            webhookSecret = EncryptedSettings.require("RAZORPAY_WEBHOOK_SECRET");
         } catch (Exception exception) {
             LOGGER.log(Level.WARNING, "Unable to load Razorpay setup.", exception);
-            return failure(new IllegalStateException("Unable to load Razorpay setup. Check the database migrations."));
+            return failure(new IllegalStateException(
+                    "Unable to load Razorpay setup. Check the database migrations and encrypted settings."));
         }
         String base = html(base(request));
         return Response.ok("""
                 <!doctype html><meta charset="utf-8"><title>Razorpay Setup</title>
                 <h1>Razorpay Setup</h1><p>%s</p>
+                <h2>Webhook setup</h2>
+                <p>Use this secret when creating or updating the Razorpay webhook. Keep it confidential.</p>
+                <label>Webhook signing secret <input type="text" readonly autocomplete="off"
+                spellcheck="false" value="%s"></label>
                 <form method="post" action="%s/api/admin/razorpay-setup/keys">
                 <label>Key ID <input name="keyId" required></label><br><br>
                 <label>Key Secret <input type="password" name="keySecret" required autocomplete="new-password"></label><br><br>
                 <button>Save Razorpay keys</button></form>
                 <p>Use both keys from the same Razorpay test or live account. The Key Secret is stored encrypted.</p>
                 <p>Enable automatic payment capture. For webhooks, select payment_link.paid,
-                payment_link.expired and payment_link.cancelled.
-                Use the webhook signing secret configured on the server.</p>
+                payment_link.expired and payment_link.cancelled.</p>
                 <a href="%s/api/admin">Admin Dashboard</a>
-                """.formatted(html(status), base, base)).header("Cache-Control", "no-store").build();
+                """.formatted(html(status), html(webhookSecret), base, base))
+                .header("Cache-Control", "no-store")
+                .header("Referrer-Policy", "no-referrer")
+                .build();
     }
 
     @POST

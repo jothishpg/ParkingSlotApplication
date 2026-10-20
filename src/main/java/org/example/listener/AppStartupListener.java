@@ -15,7 +15,6 @@ import java.sql.Statement;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-@WebListener
 public class AppStartupListener implements ServletContextListener {
 
     private static final Logger LOGGER =
@@ -26,22 +25,30 @@ public class AppStartupListener implements ServletContextListener {
         LOGGER.info("Application starting up — checking default admin user.");
 
         try {
-            String email = setting("ADMIN_EMAIL");
-            String name = setting("ADMIN_NAME");
-            String phoneNumber = setting("ADMIN_PHONE_NUMBER");
-            String password = setting("ADMIN_PASSWORD");
-
-            if (email == null || name == null || phoneNumber == null || password == null) {
-                LOGGER.warning("Admin bootstrap skipped: one or more encrypted ADMIN_* "
-                        + "settings (ADMIN_EMAIL, ADMIN_NAME, ADMIN_PHONE_NUMBER, ADMIN_PASSWORD) "
-                        + "are missing from app_settings.");
-                return;
-            }
-
-            ensureAdminUser(email, name, phoneNumber, PasswordHasher.hash(password));
+            EncryptedSettings.ensureGeneratedSecrets();
         } catch (SQLException | RuntimeException exception) {
+            LOGGER.log(Level.SEVERE, "Unable to initialize encrypted application secrets.", exception);
+            throw new IllegalStateException(
+                    "Unable to initialize encrypted application secrets.", exception);
+        }
+
+        String email = setting("ADMIN_EMAIL");
+        String name = setting("ADMIN_NAME");
+        String phoneNumber = setting("ADMIN_PHONE_NUMBER");
+        String password = setting("ADMIN_PASSWORD");
+
+        if (email == null || name == null || phoneNumber == null || password == null) {
+            LOGGER.warning("Admin bootstrap skipped: one or more ADMIN_* environment "
+                    + "variables (ADMIN_EMAIL, ADMIN_NAME, ADMIN_PHONE_NUMBER, ADMIN_PASSWORD) "
+                    + "are not set.");
+            return;
+        }
+
+        try {
+            ensureAdminUser(email, name, phoneNumber, PasswordHasher.hash(password));
+        } catch (SQLException exception) {
             LOGGER.log(Level.SEVERE,
-                    "Unable to read admin bootstrap settings or verify/create the default admin user.",
+                    "Unable to verify or create the default admin user.",
                     exception);
         }
     }
@@ -121,8 +128,8 @@ public class AppStartupListener implements ServletContextListener {
         }
     }
 
-    private String setting(String settingName) {
-        String value = EncryptedSettings.get(settingName);
+    private String setting(String environmentName) {
+        String value = System.getenv(environmentName);
         return value == null || value.isBlank() ? null : value.trim();
     }
 }

@@ -1,6 +1,6 @@
 # Customer payment links and notifications
 
-Webhook signature verification uses the encrypted `RAZORPAY_WEBHOOK_SECRET` value in `app_settings`. Configure the same secret in Razorpay's webhook settings; the application decrypts it using `GLOBAL_ENCRYPTION_KEY`.
+Webhook signature verification uses the encrypted `RAZORPAY_WEBHOOK_SECRET` value in `app_settings`. The application creates this setting at startup when missing and displays it on the admin-only Razorpay Setup page. Configure the same secret in Razorpay's webhook settings; the application decrypts it using `GLOBAL_ENCRYPTION_KEY`.
 
 Online checkout creates native Razorpay Payment Links with a 15-minute window plus a 30-second request-transit allowance. Razorpay validates its minimum expiry when the request arrives, so exactly 900 seconds from the application clock may be rejected. The returned provider deadline is saved and displayed; resends never extend it. Razorpay sends link SMS; the existing Meta integration sends WhatsApp links and status updates. No Twilio or additional SMS-provider credentials are used.
 

@@ -1,7 +1,13 @@
 // MultiParkingSystem PostgreSQL public schema
-// Updated for schema migrations through V19.
+// Updated for schema migrations through V20.
 // Partial indexes are documented below because DBML does not faithfully
 // express PostgreSQL predicates on indexes.
+
+Table app_settings {
+  key_name varchar(255) [pk, not null]
+  key_value text [not null, note: 'Encrypted setting value; encryption key is GLOBAL_ENCRYPTION_KEY from the environment']
+  updated_at timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+}
 
 Table booking {
   booking_id bigint [pk, increment]

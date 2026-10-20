@@ -12,9 +12,18 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.List;
 
 public final class EncryptedSettings {
     private static final String ENCRYPTION_KEY_ENV = "GLOBAL_ENCRYPTION_KEY";
+    private static final List<String> GENERATED_SETTING_NAMES = List.of(
+            "GMAIL_TOKEN_ENCRYPTION_KEY",
+            "META_TOKEN_ENCRYPTION_KEY",
+            "OTP_HMAC_SECRET",
+            "RAZORPAY_TOKEN_ENCRYPTION_KEY",
+            "RAZORPAY_WEBHOOK_SECRET",
+            "SESSION_SECRET",
+            "TOTP_ENCRYPTION_KEY");
     private static final int IV_BYTES = 12;
     private static final SecureRandom RANDOM = new SecureRandom();
 
@@ -47,6 +56,43 @@ public final class EncryptedSettings {
                     "Required encrypted setting is missing: " + keyName);
         }
         return value;
+    }
+
+    public static void ensureGeneratedSecrets() throws SQLException {
+        String sql = """
+                INSERT INTO app_settings (key_name, key_value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT (key_name) DO NOTHING
+                """;
+        try (Connection connection = DatabaseConnection.getConnection()) {
+            boolean originalAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (String keyName : GENERATED_SETTING_NAMES) {
+                    byte[] randomValue = new byte[32];
+                    RANDOM.nextBytes(randomValue);
+                    String value = Base64.getEncoder().encodeToString(randomValue);
+                    Arrays.fill(randomValue, (byte) 0);
+                    statement.setString(1, keyName);
+                    statement.setString(2, encrypt(value));
+                    statement.addBatch();
+                }
+                statement.executeBatch();
+                connection.commit();
+            } catch (SQLException | RuntimeException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(originalAutoCommit);
+            }
+        }
+
+        for (String keyName : GENERATED_SETTING_NAMES) {
+            String value = require(keyName);
+            if (keyName.endsWith("_ENCRYPTION_KEY")) {
+                validateAesKey(keyName, value);
+            }
+        }
     }
 
     public static String encrypt(String value) {
@@ -103,6 +149,17 @@ public final class EncryptedSettings {
         } catch (IllegalArgumentException exception) {
             throw new IllegalStateException(ENCRYPTION_KEY_ENV
                     + " must contain a Base64-encoded 32-byte key.", exception);
+        }
+    }
+
+    private static void validateAesKey(String keyName, String value) {
+        try {
+            if (Base64.getDecoder().decode(value).length != 32) {
+                throw new IllegalArgumentException("Key must be 32 bytes.");
+            }
+        } catch (IllegalArgumentException exception) {
+            throw new IllegalStateException(
+                    keyName + " must be a Base64-encoded 32-byte key.", exception);
         }
     }
 }
