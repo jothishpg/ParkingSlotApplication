@@ -54,15 +54,19 @@ public final class PaymentMessaging {
             try (ResultSet r = s.executeQuery()) {
                 if (!r.next()) return;
                 if (r.getString("customer_phone") == null) return;
+                String requestStatus = r.getString("status");
                 if ((event.equals("CLOSED") || event.equals("CLIENT_ERROR") || event.equals("EXPIRED"))
-                        && (r.getString("status").equals("PAID") || r.getString("status").equals("REVIEW"))) return;
+                        && (requestStatus.equals("PAID") || requestStatus.equals("REVIEW"))) return;
+                if (key.startsWith("FAILED:")
+                        && (requestStatus.equals("PAID") || requestStatus.equals("REVIEW")
+                        || requestStatus.equals("EXPIRED"))) return;
                 String message = text(event, r.getLong("booking_id"), r.getLong("amount_paise"),
                         r.getString("payment_link_url"), r.getTimestamp("expires_at").toInstant());
                 for (String channel : new String[]{"SMS", "WHATSAPP"}) {
                     // Razorpay notification API sends links, not arbitrary success/error SMS.
                     if (channel.equals("SMS") && (!smsLinkEvent(key)
                             || !validLink(r.getString("payment_link_url"), r.getTimestamp("expires_at").toInstant())
-                            || !r.getString("status").equals("PENDING"))) continue;
+                            || !requestStatus.equals("PENDING"))) continue;
                     if (!r.getBoolean(channel.equals("SMS") ? "sms_consent" : "whatsapp_consent")) continue;
                     try (PreparedStatement insert = c.prepareStatement("INSERT INTO payment_message_outbox(request_id,event_key,channel,recipient,message_text) "
                             + "VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING")) {

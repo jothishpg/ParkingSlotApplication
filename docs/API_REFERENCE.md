@@ -288,7 +288,7 @@ role-protected. The status/verification/event routes return JSON.
 | `POST /payments/razorpay/checkout/{id}/event` | Path: `id`; Form: `event` | `TICKET_ASSIGNER`; records a browser checkout event such as close/client error; JSON `{ "received": true }`. |
 | `GET /payments/razorpay/customer/{id}/status` | Path: `id`; Query: `token` | Public with valid token; checks customer payment status; JSON response. |
 | `POST /payments/razorpay/customer/{id}/event` | Path: `id`; Query: `token`; Form: `event` | Public with valid token; records browser checkout event; JSON response. |
-| `POST /payments/razorpay/webhook/{configId}` | Path: `configId`; JSON body (provider event); Headers: `X-Razorpay-Signature`, optional `X-Razorpay-Event-Id` | Public provider webhook. Verifies the raw-body HMAC and handles captured/failed/order-paid and payment-link events. Body limit is 256 KiB. |
+| `POST /payments/razorpay/webhook/{configId}` | Path: `configId`; JSON body (provider event); Headers: `X-Razorpay-Signature`, optional `X-Razorpay-Event-Id` | Public provider webhook. Verifies the raw-body HMAC and handles `payment.failed` plus payment-link paid/expired/cancelled events. Failed attempts are matched to their saved request, recorded, and configured customer notifications are queued; body limit is 256 KiB. |
 
 ## Outbound provider APIs used by the project
 

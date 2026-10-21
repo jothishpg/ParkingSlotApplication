@@ -167,10 +167,20 @@ public class RazorpayPaymentResource {
             if (!PaymentCrypto.verify(RazorpayClient.webhookSecret(), raw, signature))
                 return Response.status(401).build();
             JsonNode event = RazorpayClient.JSON.readTree(raw);
-            System.out.println(event);
             String type = event.path("event").asText();
+            String eventKey = eventId == null
+                    ? PaymentCrypto.hash(new String(raw, StandardCharsets.UTF_8))
+                    : eventId;
+            if (type.equals("payment.failed")) {
+                String result = PaymentLinkService.processFailedPaymentEvent(
+                        configId, event, eventKey);
+                if (result.equals("IGNORED")) {
+                    LOG.warning("Ignored an unassociated or mismatched Razorpay payment.failed event.");
+                }
+                return Response.ok(Map.of("received", true)).build();
+            }
             if (Set.of("payment_link.paid", "payment_link.expired", "payment_link.cancelled").contains(type)) {
-                PaymentLinkService.signedEvent(configId, event, eventId == null ? PaymentCrypto.hash(new String(raw, StandardCharsets.UTF_8)) : eventId);
+                PaymentLinkService.signedEvent(configId, event, eventKey);
                 return Response.ok(Map.of("received", true)).build();
             }
             return Response.ok(Map.of("received", true)).build();

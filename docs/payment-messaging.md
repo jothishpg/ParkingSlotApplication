@@ -20,7 +20,7 @@ Only a matching captured payment completes checkout and releases the slot. Signe
 
 WhatsApp messages cover the link, success, confirmed failure, payment review, expiry and service errors. Provider-confirmed network/timeout or server failures receive corresponding text. When a network/server error leaves payment uncertain, the message says it is unconfirmed and asks the customer not to pay again until checked. Closing or losing connectivity on Razorpay's external hosted page is not directly observable; webhooks and reconciliation establish status afterward.
 
-Each provider-confirmed failed payment queues a resend of the same still-valid link by SMS and WhatsApp. The WhatsApp error message explains the resend and the unchanged expiry. Repeated events for the same payment do not create duplicate queue entries. Resends stop after payment, review or expiry. If a failure message is delivered after expiry, it asks staff for a fresh link instead. Uncertain browser/network/server errors never trigger an automatic link resend.
+Each provider-confirmed `payment.failed` event is associated with its saved payment-link request using the Razorpay order/link identifiers, then recorded in `payment_attempt`. It queues a resend of the same still-valid link by SMS and a failure explanation by WhatsApp, subject to the request's enabled channels. The WhatsApp error message explains the resend and unchanged expiry. Repeated events for the same payment do not create duplicate queue entries. Resends stop after payment, review or expiry. If a failure arrives after the link deadline while the request is still pending reconciliation, the WhatsApp message asks staff for a fresh link instead. Uncertain browser/network/server errors never trigger an automatic link resend.
 
 Pending requests are reconciled about every 30 seconds, subject to backlog and provider latency. Creation timeouts are recovered by native reference_id rather than blindly creating another link. Definitive HTTP 400/401/403/422 creation rejections close that unpaid request so it does not block cash/retry. Ambiguous timeouts and server errors stay unresolved until reconciliation. An application/database outage cannot send a message while the service is down; processing resumes after recovery.
 
@@ -38,7 +38,7 @@ Razorpay receipts are separate from the application's checkout notification. No 
 
 ## Webhooks
 
-Keep the existing webhook URL and `RAZORPAY_WEBHOOK_SECRET` database setting. Subscribe to `payment_link.paid`, `payment_link.expired` and `payment_link.cancelled`. Partial payments are disabled for application-created links. Callbacks use public HTTPS `APP_BASE_URL`.
+Keep the existing webhook URL and `RAZORPAY_WEBHOOK_SECRET` database setting. Subscribe to `payment.failed`, `payment_link.paid`, `payment_link.expired` and `payment_link.cancelled`. Partial payments are disabled for application-created links. Callbacks use public HTTPS `APP_BASE_URL`.
 
 Inspect queue state without exposing customer links:
 

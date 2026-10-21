@@ -975,7 +975,7 @@ flowchart TD
 
 `POST /api/payments/razorpay/webhook/{configId}` receives raw bytes. The handler rejects oversized payloads above 262144 bytes, unknown configurations and invalid `X-Razorpay-Signature`. HMAC is computed over raw bytes, **not** parsed/reformatted JSON. A configured account ID must match the signed event.
 
-Handled event families include link paid/partially-paid/expired/cancelled; payment captured/failed; order paid; and OAuth authorization revocation. Link events validate the native link/reference and bind the order. Generic payment events use the known order. An unknown native order can be acknowledged for later background reconciliation. Successful-payment processing stores/deduplicates event identifiers; absent event IDs get a content-derived hash fallback.
+The payment webhook handles `payment_link.paid`, `payment_link.expired`, `payment_link.cancelled`, and `payment.failed`. The first three validate the native link/reference; `payment.failed` matches the payment to the saved request through its order or link ID, verifies the order/link association and amount/currency, then records the failed attempt and queues configured customer messages. Successful-payment processing stores/deduplicates event identifiers; absent event IDs get a content-derived hash fallback. Other event types may be acknowledged but are not processed here.
 
 Webhook provider authentication differs from user login: it is a public endpoint because Razorpay does not possess a user's session, but it requires the signing secret. Processing errors return a retryable response. Do not claim every acknowledged nonpayment event is written to the payment-event audit table.
 

@@ -43,26 +43,202 @@ public final class PaymentLinkService {
     public static void store(UUID request, JsonNode link) throws Exception {
         PaymentService.Checkout checkout = PaymentService.get(request);
         String id = RazorpayClient.text(link, "id"), url = RazorpayClient.text(link, "short_url");
+        String orderId = link.path("order_id").asText(null);
         if (!id.matches("plink_[A-Za-z0-9]+") || !url.startsWith("https://") || !matches(checkout, link) || link.path("expire_by").asLong() <= 0)
             throw new IllegalStateException("Payment link details do not match this request. Reconcile before collecting again.");
+        if (orderId != null && !orderId.isBlank() && !orderId.matches("order_[A-Za-z0-9]+"))
+            throw new IllegalStateException("Payment link has an invalid Razorpay order ID.");
         try (Connection c = DatabaseConnection.getConnection()) {
             c.setAutoCommit(false);
             try (PreparedStatement s = c.prepareStatement("UPDATE payment_request SET gateway_payment_link_id=?,payment_link_url=?,"
-                    + "expires_at=?,status=CASE WHEN status='CREATING' THEN 'PENDING' ELSE status END "
-                    + "WHERE request_id=? AND (gateway_payment_link_id IS NULL OR gateway_payment_link_id=?)")) {
+                    + "gateway_order_id=COALESCE(gateway_order_id,?),expires_at=?,"
+                    + "status=CASE WHEN status='CREATING' THEN 'PENDING' ELSE status END "
+                    + "WHERE request_id=? AND (gateway_payment_link_id IS NULL OR gateway_payment_link_id=?) "
+                    + "AND (gateway_order_id IS NULL OR ? IS NULL OR gateway_order_id=?)")) {
                 s.setString(1, id);
                 s.setString(2, url);
-                s.setTimestamp(3, Timestamp.from(Instant.ofEpochSecond(link.path("expire_by").asLong())));
-                s.setObject(4, request);
-                s.setString(5, id);
+                s.setString(3, orderId);
+                s.setTimestamp(4, Timestamp.from(Instant.ofEpochSecond(link.path("expire_by").asLong())));
+                s.setObject(5, request);
+                s.setString(6, id);
+                s.setString(7, orderId);
+                s.setString(8, orderId);
                 if (s.executeUpdate() != 1)
-                    throw new IllegalStateException("Conflicting payment link. Ask an administrator to reconcile.");
+                    throw new IllegalStateException("Conflicting payment link or order. Ask an administrator to reconcile.");
                 PaymentMessaging.enqueue(c, request, "LINK", "LINK");
                 c.commit();
             } catch (Exception e) {
                 c.rollback();
                 throw e;
             }
+        }
+    }
+
+    public static String processFailedPaymentEvent(
+            long configId, JsonNode event, String eventId) throws Exception {
+        JsonNode payment = event.path("payload").path("payment").path("entity");
+        String paymentId = payment.path("id").asText("");
+        String orderId = payment.path("order_id").asText("");
+        String eventLinkId = payment.path("payment_link_id").asText("");
+        if (!"payment.failed".equals(event.path("event").asText())
+                || !"failed".equals(payment.path("status").asText())
+                || !paymentId.matches("pay_[A-Za-z0-9]+")
+                || (!orderId.isBlank() && !orderId.matches("order_[A-Za-z0-9]+"))
+                || (!eventLinkId.isBlank() && !eventLinkId.matches("plink_[A-Za-z0-9]+"))
+                || (orderId.isBlank() && eventLinkId.isBlank())) {
+            return "IGNORED";
+        }
+
+        UUID requestId = null;
+        if (!eventLinkId.isBlank()) {
+            requestId = requestIdForLink(configId, eventLinkId);
+        }
+        if (!orderId.isBlank()) {
+            UUID orderRequestId = requestIdForOrder(configId, orderId);
+            if (requestId != null && orderRequestId != null && !requestId.equals(orderRequestId)) {
+                return "IGNORED";
+            }
+            if (requestId == null) {
+                requestId = orderRequestId;
+            }
+        }
+
+        JsonNode providerOrder = null;
+        if (requestId == null && !orderId.isBlank()) {
+            MerchantConfig config = MerchantConfig.load(configId);
+            providerOrder = RazorpayClient.api("orders/" + orderId, null, config.authorization());
+            if (!orderId.equals(providerOrder.path("id").asText())) {
+                return "IGNORED";
+            }
+            requestId = parseRequestId(providerOrder.path("receipt").asText(""));
+        }
+        if (requestId == null) {
+            return "IGNORED";
+        }
+
+        PaymentService.Checkout checkout;
+        try {
+            checkout = PaymentService.get(requestId);
+        } catch (IllegalArgumentException exception) {
+            return "IGNORED";
+        }
+        if (checkout.config() != configId) {
+            return "IGNORED";
+        }
+
+        String savedLinkId = linkId(requestId);
+        if (savedLinkId == null) {
+            throw new IllegalStateException(
+                    "The payment link is not saved yet; retry the failed-payment webhook.");
+        }
+        if (!eventLinkId.isBlank() && !savedLinkId.equals(eventLinkId)) {
+            return "IGNORED";
+        }
+        String savedOrderId = orderId(requestId);
+        if (!orderId.isBlank()) {
+            if (savedOrderId != null && !savedOrderId.equals(orderId)) {
+                return "IGNORED";
+            }
+            if (savedOrderId == null) {
+                MerchantConfig config = MerchantConfig.load(configId);
+                if (providerOrder == null) {
+                    providerOrder = RazorpayClient.api("orders/" + orderId, null, config.authorization());
+                }
+                if (!orderId.equals(providerOrder.path("id").asText())
+                        || !requestId.toString().equals(providerOrder.path("receipt").asText())
+                        || checkout.paise() != providerOrder.path("amount").asLong(-1)
+                        || !"INR".equals(providerOrder.path("currency").asText())) {
+                    return "IGNORED";
+                }
+                JsonNode providerLink = RazorpayClient.api(
+                        "payment_links/" + savedLinkId, null, config.authorization());
+                if (!savedLinkId.equals(providerLink.path("id").asText())
+                        || !orderId.equals(providerLink.path("order_id").asText())
+                        || !matches(checkout, providerLink)) {
+                    return "IGNORED";
+                }
+                bindOrderId(requestId, configId, orderId);
+            }
+        }
+        if (!matchesFailedPayment(checkout, payment, savedLinkId, savedOrderId == null
+                ? orderId : savedOrderId)) {
+            return "IGNORED";
+        }
+        return PaymentService.process(checkout, payment, configId, eventId);
+    }
+
+    static boolean matchesFailedPayment(
+            PaymentService.Checkout checkout, JsonNode payment,
+            String savedLinkId, String savedOrderId) {
+        String paymentLinkId = payment.path("payment_link_id").asText("");
+        String paymentOrderId = payment.path("order_id").asText("");
+        return "failed".equals(payment.path("status").asText())
+                && payment.path("id").asText("").matches("pay_[A-Za-z0-9]+")
+                && payment.path("amount").asLong(-1) == checkout.paise()
+                && "INR".equals(payment.path("currency").asText())
+                && (paymentLinkId.isBlank() || paymentLinkId.equals(savedLinkId))
+                && (paymentOrderId.isBlank() || paymentOrderId.equals(savedOrderId));
+    }
+
+    private static UUID requestIdForLink(long configId, String linkId) throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT request_id FROM payment_request WHERE config_id=? AND gateway_payment_link_id=?")) {
+            statement.setLong(1, configId);
+            statement.setString(2, linkId);
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? result.getObject("request_id", UUID.class) : null;
+            }
+        }
+    }
+
+    private static UUID requestIdForOrder(long configId, String orderId) throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT request_id FROM payment_request WHERE config_id=? AND gateway_order_id=?")) {
+            statement.setLong(1, configId);
+            statement.setString(2, orderId);
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? result.getObject("request_id", UUID.class) : null;
+            }
+        }
+    }
+
+    private static String orderId(UUID requestId) throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT gateway_order_id FROM payment_request WHERE request_id=?")) {
+            statement.setObject(1, requestId);
+            try (ResultSet result = statement.executeQuery()) {
+                if (!result.next()) {
+                    throw new SQLException("Payment request disappeared while processing a failure event.");
+                }
+                return result.getString(1);
+            }
+        }
+    }
+
+    private static void bindOrderId(UUID requestId, long configId, String orderId)
+            throws SQLException {
+        try (Connection connection = DatabaseConnection.getConnection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "UPDATE payment_request SET gateway_order_id=? WHERE request_id=? AND config_id=? "
+                             + "AND (gateway_order_id IS NULL OR gateway_order_id=?)")) {
+            statement.setString(1, orderId);
+            statement.setObject(2, requestId);
+            statement.setLong(3, configId);
+            statement.setString(4, orderId);
+            if (statement.executeUpdate() != 1) {
+                throw new SQLException("Could not bind the verified Razorpay order to its payment request.");
+            }
+        }
+    }
+
+    private static UUID parseRequestId(String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException exception) {
+            return null;
         }
     }
 

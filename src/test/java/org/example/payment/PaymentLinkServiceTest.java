@@ -36,6 +36,28 @@ class PaymentLinkServiceTest {
         assertEquals("COMPLETED",PaymentService.disposition(checkout,payment,false));
         assertEquals("REVIEW",PaymentService.disposition(checkout,payment.put("amount_refunded",100),false));
     }
+    @Test void failedAttemptMustMatchTheSavedLinkOrOrderAndRequestAmount() {
+        PaymentService.Checkout checkout=checkout();
+        ObjectNode payment=RazorpayClient.JSON.createObjectNode()
+                .put("id","pay_123").put("status","failed").put("amount",3400)
+                .put("currency","INR").put("payment_link_id","plink_123")
+                .put("order_id","order_123");
+
+        assertTrue(PaymentLinkService.matchesFailedPayment(
+                checkout,payment,"plink_123","order_123"));
+        assertFalse(PaymentLinkService.matchesFailedPayment(
+                checkout,payment,"plink_other","order_123"));
+        assertFalse(PaymentLinkService.matchesFailedPayment(
+                checkout,payment,"plink_123","order_other"));
+        assertFalse(PaymentLinkService.matchesFailedPayment(
+                checkout,payment.put("amount",3500),"plink_123","order_123"));
+        assertFalse(PaymentLinkService.matchesFailedPayment(
+                checkout,payment.put("amount",3400).put("currency","USD"),
+                "plink_123","order_123"));
+        assertFalse(PaymentLinkService.matchesFailedPayment(
+                checkout,payment.put("currency","INR").put("status","captured"),
+                "plink_123","order_123"));
+    }
     @Test void applicationWindowIsFifteenMinutes() {assertEquals(900,PaymentService.PAYMENT_WINDOW_SECONDS);}
     @Test void definitiveClientRejectionsDifferFromAmbiguousServerErrors() {
         assertTrue(new RazorpayClient.ApiException(400).definitiveRejection());

@@ -53,8 +53,8 @@ public class RazorpaySetupResource {
                 <label>Key Secret <input type="password" name="keySecret" required autocomplete="new-password"></label><br><br>
                 <button>Save Razorpay keys</button></form>
                 <p>Use both keys from the same Razorpay test or live account. The Key Secret is stored encrypted.</p>
-                <p>Enable automatic payment capture. For webhooks, select payment_link.paid,
-                payment_link.expired and payment_link.cancelled.</p>
+                <p>Enable automatic payment capture. For webhooks, select payment.failed,
+                payment_link.paid, payment_link.expired and payment_link.cancelled.</p>
                 <a href="%s/api/admin">Admin Dashboard</a>
                 """.formatted(html(status), html(webhookSecret), base, base))
                 .header("Cache-Control", "no-store")

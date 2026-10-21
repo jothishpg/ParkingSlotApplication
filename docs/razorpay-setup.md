@@ -65,7 +65,7 @@ FROM razorpay_config
 WHERE active = TRUE;
 ```
 
-Subscribe to `payment_link.paid`, `payment_link.expired`, and `payment_link.cancelled`, using exactly the server's `RAZORPAY_WEBHOOK_SECRET` value. For OAuth also subscribe to `account.app.authorization_revoked` through the Partner application's webhook configuration. That event disables new payments for the matching merchant.
+Subscribe to `payment.failed`, `payment_link.paid`, `payment_link.expired`, and `payment_link.cancelled`, using exactly the server's `RAZORPAY_WEBHOOK_SECRET` value. The `payment.failed` event records the failed attempt and queues customer status messaging; it does not mark the overall payment request as expired. For OAuth also subscribe to `account.app.authorization_revoked` through the Partner application's webhook configuration. That event disables new payments for the matching merchant.
 
 Each business endpoint processes its own database/configuration. A shared Partner webhook endpoint serving many business deployments needs a merchant-to-deployment router; this application does not contain such a router. Configure webhook delivery to the relevant business endpoint and test that merchant's payment events reach it before going live.
 
